@@ -17,7 +17,7 @@ def fmt_rho(cell):
         return f"<span class='dim'>樣本不足(n={cell.get('n', 0) if cell else 0})</span>"
     rho, pval, n = cell["rho"], cell["pval"], cell["n"]
     sig = "**" if pval < 0.01 else ("*" if pval < 0.05 else "")
-    cls = "neg" if rho < 0 else "pos"
+    cls = "fear-tilt" if rho < 0 else "greed-tilt"
     return f"<span class='{cls}'>{rho:+.3f}{sig}</span><br><span class='sub'>p={pval:.3f}, n={n}</span>"
 
 
@@ -25,9 +25,9 @@ def fmt_mono(bucket):
     if bucket is None or bucket.get("monotonicity") is None:
         return "<span class='dim'>—</span>"
     v = bucket["monotonicity"]
-    cls = "neg" if v < 0 else "pos"
-    warn = f"（{bucket['n_low_confidence']}組樣本過少）" if bucket["n_low_confidence"] else ""
-    return f"<span class='{cls}'>{v:+.3f}</span> <span class='sub'>{warn}</span>"
+    cls = "fear-tilt" if v < 0 else "greed-tilt"
+    warn = f"<span class='warn-chip'>{bucket['n_low_confidence']}組樣本過少</span>" if bucket["n_low_confidence"] else ""
+    return f"<span class='{cls}'>{v:+.3f}</span> {warn}"
 
 
 def build():
@@ -92,49 +92,100 @@ def build():
 <title>CNN恐懼貪婪指數(股市版) 對 NQ / SP500 預測力驗證報告</title>
 <style>
   :root {{
-    --bg: #faf8f4; --fg: #2a2a28; --card: #ffffff; --border: #e4ddd0;
-    --accent: #2f6b4f; --neg: #b1592f; --pos: #2f6b4f; --dim: #9a9488;
+    --paper: #EEF0EA;
+    --ink: #20242B;
+    --card: #FBFCF9;
+    --border: #D6D9CF;
+    --fear: #3E5C76;
+    --greed: #A9782E;
+    --warn: #8E3B3B;
+    --dim: #6C7268;
+    --font-display: "Noto Serif TC", "Songti TC", "PingFang TC", serif;
+    --font-body: "PingFang TC", "Noto Sans TC", -apple-system, "Helvetica Neue", sans-serif;
+    --font-num: ui-monospace, "SF Mono", Menlo, "PingFang TC", monospace;
   }}
   @media (prefers-color-scheme: dark) {{
-    :root {{ --bg:#1c1b19; --fg:#eae6de; --card:#26241f; --border:#3a362d; --dim:#8a8478; }}
+    :root {{
+      --paper:#14171C; --ink:#E7E9E2; --card:#1B1F26; --border:#2C313A;
+      --fear:#7FA3C4; --greed:#D9A75C; --warn:#C97575; --dim:#9AA0AC;
+    }}
+  }}
+  :root[data-theme="dark"] {{
+    --paper:#14171C; --ink:#E7E9E2; --card:#1B1F26; --border:#2C313A;
+    --fear:#7FA3C4; --greed:#D9A75C; --warn:#C97575; --dim:#9AA0AC;
+  }}
+  :root[data-theme="light"] {{
+    --paper: #EEF0EA; --ink: #20242B; --card: #FBFCF9; --border: #D6D9CF;
+    --fear: #3E5C76; --greed: #A9782E; --warn: #8E3B3B; --dim: #6C7268;
   }}
   * {{ box-sizing: border-box; }}
   body {{
-    background: var(--bg); color: var(--fg); font-family: "PingFang TC","Heiti TC","Noto Sans CJK TC",
-    -apple-system, sans-serif; line-height: 1.7; max-width: 980px; margin: 0 auto; padding: 32px 20px 80px;
+    background: var(--paper); color: var(--ink); font-family: var(--font-body);
+    line-height: 1.75; max-width: 920px; margin: 0 auto; padding: 40px 20px 90px;
   }}
-  h1 {{ font-size: 1.6em; border-bottom: 3px solid var(--accent); padding-bottom: 10px; }}
-  h2 {{ font-size: 1.25em; margin-top: 2.4em; border-left: 5px solid var(--accent); padding-left: 10px; }}
-  h3 {{ font-size: 1.05em; margin-top: 1.6em; }}
-  h4 {{ font-size: 0.98em; color: var(--dim); margin-top: 1.4em; }}
-  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; margin: 14px 0; }}
-  table {{ width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92em; }}
-  th, td {{ border: 1px solid var(--border); padding: 8px 10px; text-align: center; vertical-align: middle; }}
-  th {{ background: rgba(47,107,79,0.08); }}
-  .sub {{ font-size: 0.82em; color: var(--dim); }}
+  h1, h2, h3, h4 {{ font-family: var(--font-display); text-wrap: balance; font-weight: 600; }}
+  h1 {{ font-size: 1.7em; letter-spacing: 0.02em; margin-bottom: 0.3em; }}
+  h2 {{ font-size: 1.22em; margin-top: 2.6em; padding-bottom: 8px; border-bottom: 1px solid var(--border); }}
+  h3 {{ font-size: 1.02em; margin-top: 1.7em; }}
+  h4 {{ font-size: 0.95em; color: var(--dim); margin-top: 1.4em; font-family: var(--font-body); }}
+  p {{ max-width: 66ch; }}
+  .lede {{ font-size: 0.95em; color: var(--dim); max-width: 70ch; }}
+  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 20px 24px; margin: 16px 0; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92em; font-variant-numeric: tabular-nums; }}
+  .table-wrap {{ overflow-x: auto; }}
+  th, td {{ border: 1px solid var(--border); padding: 9px 11px; text-align: center; vertical-align: middle; }}
+  th {{ font-family: var(--font-display); font-weight: 600; background: color-mix(in srgb, var(--fear) 8%, transparent); }}
+  td {{ font-family: var(--font-num); }}
+  td:first-child {{ font-family: var(--font-body); }}
+  .sub {{ font-size: 0.82em; color: var(--dim); font-family: var(--font-body); }}
   .dim {{ color: var(--dim); }}
-  .neg {{ color: var(--neg); font-weight: 600; }}
-  .pos {{ color: var(--pos); font-weight: 600; }}
+  .fear-tilt {{ color: var(--fear); font-weight: 700; }}
+  .greed-tilt {{ color: var(--greed); font-weight: 700; }}
+  .quality-good {{ color: var(--ink); font-weight: 700; }}
+  .warn-chip {{
+    display: inline-block; font-family: var(--font-body); font-size: 0.78em; color: var(--warn);
+    border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); border-radius: 3px; padding: 1px 6px;
+  }}
   .chart-pair {{ display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }}
   .chart-pair > div {{ flex: 1 1 360px; text-align: center; }}
-  .callout {{ border-left: 4px solid var(--accent); background: rgba(47,107,79,0.06); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0; }}
-  .callout.warn {{ border-left-color: var(--neg); background: rgba(177,89,47,0.08); }}
-  code {{ background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }}
-  footer {{ margin-top: 4em; padding-top: 1em; border-top: 1px solid var(--border); color: var(--dim); font-size: 0.85em; }}
+  .chart-pair img {{ border-radius: 4px; border: 1px solid var(--border); }}
+  .callout {{
+    border-left: 3px solid var(--fear); background: color-mix(in srgb, var(--fear) 7%, var(--card));
+    padding: 14px 18px; border-radius: 0 4px 4px 0; margin: 16px 0; max-width: none;
+  }}
+  .callout.warn {{ border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--card)); }}
+  code {{
+    font-family: var(--font-num); background: color-mix(in srgb, var(--ink) 8%, transparent);
+    padding: 1px 6px; border-radius: 3px; font-size: 0.88em;
+  }}
+  ul {{ padding-left: 1.3em; }}
+  li {{ margin: 0.4em 0; }}
+  .gauge-row {{ display: flex; align-items: center; gap: 14px; margin: 18px 0 24px; }}
+  .gauge-bar {{
+    flex: 1; height: 10px; border-radius: 5px;
+    background: linear-gradient(90deg, var(--fear), color-mix(in srgb, var(--fear) 40%, var(--greed)), var(--greed));
+  }}
+  .gauge-label {{ font-family: var(--font-display); font-size: 0.82em; color: var(--dim); white-space: nowrap; }}
+  footer {{ margin-top: 4.5em; padding-top: 1.2em; border-top: 1px solid var(--border); color: var(--dim); font-size: 0.85em; }}
 </style>
 </head>
 <body>
 
 <h1>CNN恐懼貪婪指數（股市版）對 NQ 與 SP500 未來報酬的預測力驗證</h1>
-<p class="sub">
+<p class="lede">
   獨立分析專案，與美債恐懼貪婪儀表板專案（<code>bond_data_pipeline</code>）分開存放於
   <code>fg_nq_analysis/ic_analysis/</code>。方法論沿用美債專案「因子驗證分析報告」的IC與分位數分桶架構，
   套用在CNN官方股市版指數上。
 </p>
+<div class="gauge-row">
+  <span class="gauge-label">0 極度恐懼</span>
+  <div class="gauge-bar"></div>
+  <span class="gauge-label">100 極度貪婪</span>
+</div>
 
 <h2>一、摘要：全樣本結果</h2>
 <div class="card">
-  <table>
+  <div class="table-wrap"><table>
     <tr><th>樣本</th><th>IC vs NQ=F（20日、不重疊取樣）</th><th>IC vs SP500（20日、不重疊取樣）</th>
         <th>分桶單調性 vs NQ</th><th>分桶單調性 vs SP500</th></tr>
     <tr>
@@ -144,7 +195,7 @@ def build():
       <td>{fmt_mono(full['bucket']['NQ'])}</td>
       <td>{fmt_mono(full['bucket']['SPX'])}</td>
     </tr>
-  </table>
+  </table></div>
   <p class="sub">* p&lt;0.05　** p&lt;0.01（Spearman檢定）。IC為負，代表分數低（恐懼）對應未來報酬較高，方向符合「恐懼買入」的傳統解讀；IC為正則相反。</p>
 </div>
 
@@ -159,10 +210,10 @@ def build():
   這種滾動窗口限制）。因此「第三方重建期間」與「官方API期間」的切點，直接對齊資料可信度真正改變的那一天。
 </div>
 <div class="card">
-  <table>
+  <div class="table-wrap"><table>
     <tr><th>樣本</th><th>IC vs NQ=F</th><th>IC vs SP500</th><th>分桶單調性 vs NQ</th><th>分桶單調性 vs SP500</th></tr>
     {ic_rows}
-  </table>
+  </table></div>
 </div>
 
 <h3>兩段子時期分桶圖</h3>
@@ -180,28 +231,28 @@ def build():
 <h2>三、資料來源與可信度</h2>
 <div class="card">
   <h3>CNN指數（股市版）</h3>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th>期間</th><th>來源</th><th>可信度</th></tr>
     <tr><td>2011-01-03 ~ 2020-07-14</td><td>第三方重建（GitHub: <code>whit3rabbit/fear-greed-data</code>）</td><td>中——見下方量化驗證</td></tr>
     <tr><td>2020-07-15 ~ 今</td><td>CNN官方API（<code>production.dataviz.cnn.io</code>）</td><td>高——官方即時資料</td></tr>
-  </table>
+  </table></div>
   <p>合併後的資料表（<code>data/fg_merged.csv</code>）在每一列都標註 <code>source</code> 欄位
   （<code>official</code> / <code>reconstructed</code>），兩種可信度的資料在分析全程都可以被獨立篩選、不會被混在一起處理。</p>
 
   <h3>重建準確度驗證（不只是文字警語，用重疊期實際比對）</h3>
   <p>第三方重建資料在近年其實持續更新到今天，因此可以拿 2020-07-15 之後「官方API」與「第三方重建」
   同時存在的重疊期，直接比較兩者準確度：</p>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th>重疊期</th><th>樣本數</th><th>Spearman相關</th><th>平均絕對誤差 MAE</th><th>均方根誤差 RMSE</th><th>情緒標籤(fear/greed等)完全一致率</th></tr>
     <tr>
       <td>{val['overlap_start']} ~ {val['overlap_end']}</td>
       <td>{val['n_overlap_days']}</td>
-      <td class="pos">{val['spearman_rho']:.3f}</td>
+      <td class="quality-good">{val['spearman_rho']:.3f}</td>
       <td>{val['mae']:.2f}分</td>
       <td>{val['rmse']:.2f}分</td>
       <td>{val['rating_exact_match_rate']:.1%}</td>
     </tr>
-  </table>
+  </table></div>
   <p class="sub">第三方重建資料跟官方資料在等級相關上高度一致（ρ≈0.95），平均誤差約1.5分（滿分100分），
   但RMSE比MAE明顯大，代表存在少數誤差較大的離群日；情緒標籤（fear/greed等5級）完全一致率約92.5%，
   表示約每13天會有一天標籤等級對不上（例如官方判「fear」但重建資料判「neutral」）。整體而言重建資料
@@ -232,11 +283,11 @@ def build():
   下面用本次算出來的全樣本數字具體對照：
 </div>
 <div class="card">
-  <table>
+  <div class="table-wrap"><table>
     <tr><th></th><th>NQ=F（乾淨的跨市場測試）</th><th>SP500（部分同源，解讀要打折扣）</th></tr>
     <tr><td>全樣本IC（20日、不重疊）</td><td>{fmt_rho(full['ic']['NQ'])}</td><td>{fmt_rho(full['ic']['SPX'])}</td></tr>
     <tr><td>全樣本分桶單調性</td><td>{fmt_mono(full['bucket']['NQ'])}</td><td>{fmt_mono(full['bucket']['SPX'])}</td></tr>
-  </table>
+  </table></div>
 </div>
 
 <h2>五、方法論</h2>

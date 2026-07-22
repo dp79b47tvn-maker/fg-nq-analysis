@@ -117,16 +117,32 @@ def bucket_analysis(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
     return {"table": grp, "monotonicity": float(mono_rho) if pd.notna(mono_rho) else None}
 
 
+FEAR_HEX = "#3E5C76"   # 分桶1端：最恐懼
+GREED_HEX = "#B8863B"  # 分桶20端：最貪婪
+WARN_HEX = "#8E3B3B"   # 低樣本數警示（語意色，跟恐懼/貪婪主色分開）
+
+
+def _lerp_hex(c1, c2, t):
+    c1 = tuple(int(c1[i:i+2], 16) for i in (1, 3, 5))
+    c2 = tuple(int(c2[i:i+2], 16) for i in (1, 3, 5))
+    mixed = tuple(round(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+    return f"#{mixed[0]:02x}{mixed[1]:02x}{mixed[2]:02x}"
+
+
 def bucket_chart_base64(bucket_result, title):
     if bucket_result is None:
         return None
     grp = bucket_result["table"]
+    n_bars = max(len(grp) - 1, 1)
     fig, ax = plt.subplots(figsize=(9.5, 3.4), dpi=140)
-    colors = ["#b1592f" if lc else "#2f6b4f" for lc in grp["low_confidence"]]
-    bars = ax.bar(grp["label"], grp["mean_fwd_ret"], color=colors, width=0.72)
-    ax.axhline(0, color="#888", linewidth=0.8)
+    colors = [_lerp_hex(FEAR_HEX, GREED_HEX, i / n_bars) for i in range(len(grp))]
+    bars = ax.bar(grp["label"], grp["mean_fwd_ret"], color=colors, width=0.72,
+                   edgecolor=[WARN_HEX if lc else "none" for lc in grp["low_confidence"]],
+                   linewidth=[2.2 if lc else 0 for lc in grp["low_confidence"]],
+                   hatch=["///" if lc else None for lc in grp["low_confidence"]])
+    ax.axhline(0, color="#9a9488", linewidth=0.8)
     ax.set_ylabel(f"未來{HORIZON}日平均報酬 (%)", fontsize=9)
-    ax.set_xlabel("CNN指數分數分桶(1=最恐懼 → 20=最貪婪)", fontsize=9)
+    ax.set_xlabel("CNN指數分數分桶（1=最恐懼　→　20=最貪婪）", fontsize=9)
     ax.set_title(title, fontsize=10)
     ax.tick_params(axis="x", labelsize=7.5)
     ax.tick_params(axis="y", labelsize=8)
