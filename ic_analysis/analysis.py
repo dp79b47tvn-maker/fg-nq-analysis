@@ -13,10 +13,11 @@ CNN 恐懼貪婪指數(股市版) 對 NQ=F / SP500 的因子驗證分析
      更短的期間會直接跌破自訂的n=10門檻)。分桶是描述性統計、不是拿來算顯著性
      p值，重疊窗口造成的自相關對「平均數」的偏誤遠比對「IC的p值」小，這是能
      接受的權衡，但明確寫在報告方法論頁，不要讓讀者誤以為分桶跟IC用同一套取樣。
-  3. 樣本切分：官方API實測資料下限是2020-07-15(見fetch_fg.py內的說明，不是
-     使用者原信假設的2021-02-01)，因此兩段子時期以此為界：
-       - 第三方重建期間：2011-01-03 ~ 2020-07-14
-       - 官方API期間：    2020-07-15 ~ 今
+  3. 樣本切分：官方API真正可信的資料下限是2021-02-01(見fetch_fg.py內的說明——
+     2020-07-15~2021-01-21這段官方API雖然HTTP 200，但回傳的分數有122天是打死的
+     50.0佔位值，不是真的逐日資料，已改用第三方重建資料取代)，因此兩段子時期以此為界：
+       - 第三方重建期間：2011-01-03 ~ 2021-01-31
+       - 官方API期間：    2021-02-01 ~ 今
 """
 import base64
 import io
@@ -54,7 +55,7 @@ OUT_DIR.mkdir(exist_ok=True)
 HORIZON = 20
 N_BUCKETS = 20
 LOW_N_WARN = 10
-OFFICIAL_FLOOR = pd.Timestamp("2020-07-15")
+OFFICIAL_FLOOR = pd.Timestamp("2021-02-01")  # 見fetch_fg.py：修正後的官方API資料真正可信下限
 
 TARGETS = {"NQ": "NQ=F (那斯達克100期貨)", "SPX": "^GSPC (標普500指數)"}
 
@@ -352,7 +353,7 @@ def price_trend_chart_base64(df, periods):
         boundary = pd.Timestamp(periods[pname]["date_range"][0])
         if pname == "period2_official":
             ax.axvline(boundary, color="#9a9488", linewidth=0.8, linestyle=":")
-            ax.annotate("官方API期間起點\n2020-07-15", (boundary, ax.get_ylim()[1]),
+            ax.annotate("官方API期間起點\n2021-02-01", (boundary, ax.get_ylim()[1]),
                         fontsize=7, color="#6C7268", ha="left", va="top",
                         xytext=(4, -4), textcoords="offset points")
     nq_valid, spx_valid = nq_idx.dropna(), spx_idx.dropna()
@@ -375,6 +376,66 @@ def price_trend_chart_base64(df, periods):
     ax.legend(loc="upper left", fontsize=8, frameon=False)
     fig.tight_layout()
     return fig_to_base64(fig)
+
+
+EXTREME_FEAR_TH = 25
+EXTREME_GREED_TH = 75
+
+
+def timeline_comparison_chart_base64(df):
+    """上下兩層對齊圖：上層是CNN指數本身的時間軸(標出25/75門檻)，下層是NQ/SP500指數化
+    價格走勢，並在股價線上用綠點標出CNN指數<25(最恐懼)、紅點標出>75(最貪婪)的那些日子，
+    方便直接用肉眼比對『極端讀數出現時，股價實際在做什麼』。"""
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(9.5, 6.6), dpi=140, sharex=True,
+        gridspec_kw={"height_ratios": [1, 1.7], "hspace": 0.06},
+    )
+
+    is_official = df["source"] == "official"
+    ax1.plot(df.index[~is_official], df["score"][~is_official], color=FEAR_HEX,
+              linewidth=0.7, alpha=0.5, label="第三方重建")
+    ax1.plot(df.index[is_official], df["score"][is_official], color=FEAR_HEX,
+              linewidth=0.9, label="官方API")
+    ax1.axhspan(0, EXTREME_FEAR_TH, color="#2E7D4F", alpha=0.08, linewidth=0)
+    ax1.axhspan(EXTREME_GREED_TH, 100, color="#B23B3B", alpha=0.08, linewidth=0)
+    ax1.axhline(EXTREME_FEAR_TH, color="#2E7D4F", linewidth=0.8, linestyle="--")
+    ax1.axhline(EXTREME_GREED_TH, color="#B23B3B", linewidth=0.8, linestyle="--")
+    ax1.set_ylim(0, 100)
+    ax1.set_ylabel("CNN指數分數", fontsize=9)
+    ax1.text(df.index[10], EXTREME_FEAR_TH - 3, f"{EXTREME_FEAR_TH}＝最恐懼門檻",
+              fontsize=7, color="#2E7D4F", va="top")
+    ax1.text(df.index[10], EXTREME_GREED_TH + 3, f"{EXTREME_GREED_TH}＝最貪婪門檻",
+              fontsize=7, color="#B23B3B", va="bottom")
+    ax1.legend(loc="upper left", fontsize=7.5, frameon=False, ncol=2)
+    ax1.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax1.spines[spine].set_visible(False)
+
+    nq_idx = df["NQ"] / df["NQ"].iloc[0] * 100
+    spx_idx = df["SPX"] / df["SPX"].iloc[0] * 100
+    ax2.plot(df.index, nq_idx, color="#23262B", linewidth=1.0, label="NQ=F（那斯達克100期貨）")
+    ax2.plot(df.index, spx_idx, color="#8A8577", linewidth=0.9, linestyle="--",
+              label="^GSPC（標普500指數）")
+    ax2.set_yscale("log")
+
+    fear_mask = df["score"] < EXTREME_FEAR_TH
+    greed_mask = df["score"] > EXTREME_GREED_TH
+    n_fear, n_greed = int(fear_mask.sum()), int(greed_mask.sum())
+    ax2.scatter(df.index[fear_mask], nq_idx[fear_mask], color="#2E7D4F", s=9, zorder=5,
+                label=f"分數<{EXTREME_FEAR_TH}最恐懼（{n_fear}天）")
+    ax2.scatter(df.index[fear_mask], spx_idx[fear_mask], color="#2E7D4F", s=7, zorder=5)
+    ax2.scatter(df.index[greed_mask], nq_idx[greed_mask], color="#B23B3B", s=9, zorder=5,
+                label=f"分數>{EXTREME_GREED_TH}最貪婪（{n_greed}天）")
+    ax2.scatter(df.index[greed_mask], spx_idx[greed_mask], color="#B23B3B", s=7, zorder=5)
+    ax2.set_ylabel("指數化價格（期初=100，對數座標）", fontsize=9)
+    ax2.tick_params(axis="x", labelsize=8)
+    ax2.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax2.spines[spine].set_visible(False)
+    ax2.legend(loc="upper left", fontsize=7.5, frameon=False, ncol=2)
+
+    fig.tight_layout()
+    return fig_to_base64(fig), {"n_fear": n_fear, "n_greed": n_greed}
 
 
 def fig_to_base64(fig):
@@ -427,6 +488,10 @@ def run_all():
                 results["periods"][pname]["bucket"][tcol] = None
 
     results["price_trend_chart_base64"] = price_trend_chart_base64(df, results["periods"])
+
+    timeline_chart, timeline_stats = timeline_comparison_chart_base64(df)
+    results["timeline_chart_base64"] = timeline_chart
+    results["timeline_stats"] = timeline_stats
 
     # ---------------------------------------------------- 策略回測（全樣本，daily rebalance）
     results["backtest"] = {}

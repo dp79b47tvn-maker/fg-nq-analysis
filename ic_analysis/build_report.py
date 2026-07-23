@@ -105,8 +105,8 @@ def build():
     nq_consistent = len(set(nq_signs)) == 1 and None not in nq_signs
     spx_consistent = len(set(spx_signs)) == 1 and None not in spx_signs
 
-    stability_note_nq = "方向一致" if nq_consistent else "方向不一致"
-    stability_note_spx = "方向一致" if spx_consistent else "方向不一致"
+    stability_note_nq = "一致" if nq_consistent else "不一致"
+    stability_note_spx = "一致" if spx_consistent else "不一致"
 
     # ---- 中間分數規律性 ----
     middle_rows = ""
@@ -163,6 +163,13 @@ def build():
         if not c:
             return "<p class='dim'>（無法產生回測圖）</p>"
         return f"<img src='data:image/png;base64,{c}' style='width:100%;max-width:820px;'/>"
+
+    timeline_img = (
+        f"<img src='data:image/png;base64,{r['timeline_chart_base64']}' "
+        f"style='width:100%;max-width:820px;'/>"
+        if r.get("timeline_chart_base64") else "<p class='dim'>（無法產生時間軸對照圖）</p>"
+    )
+    ts = r.get("timeline_stats", {})
 
     html = f"""<!doctype html>
 <html lang="zh-Hant">
@@ -260,6 +267,22 @@ def build():
   <span class="gauge-label">0 極度恐懼</span>
   <div class="gauge-bar"></div>
   <span class="gauge-label">100 極度貪婪</span>
+</div>
+
+<h3>指數時間軸總覽：CNN分數 vs NQ／SP500走勢</h3>
+<p>上層是CNN指數本身逐日的分數（淺色＝第三方重建、深色＝官方API），標出25分（最恐懼門檻）、
+75分（最貪婪門檻）；下層是NQ=F、SP500指數化後的價格走勢，在對應日期用<span class="fear-tilt"
+style="color:#2E7D4F">綠點標出分數&lt;25</span>、<span class="fear-tilt" style="color:#B23B3B">紅點
+標出分數&gt;75</span>，方便直接用肉眼比對「極端讀數出現時，股價實際在做什麼」——
+全樣本裡分數低於25的有{ts.get('n_fear','—')}天、高於75的有{ts.get('n_greed','—')}天。</p>
+<div style="text-align:center;">{timeline_img}</div>
+<div class="callout warn">
+  <b>這張圖在製作過程中，直接肉眼發現了一個資料品質問題：</b>上層CNN指數線在2020年下半段有一截
+  異常地打平成一條直線。往下追查後發現，CNN官方API在2020-07-15~2021-01-21這段回傳的分數，
+  有122天被打死在50.0（後端某個計算窗口顯然還沒暖機完成的佔位值），不是真的逐日計算結果。
+  這個問題已經修正——詳見下方「兩段子時期對照」與「資料來源與可信度」，修正後全篇報告的官方/
+  第三方切點從原本推測的2020-07-15改成2021-02-01，所有IC、分桶、回測數字都已經用修正後的資料
+  重新計算。這是這次做圖表意外抓到的一個真實錯誤，不是假設性的風險提示。
 </div>
 
 <h2>一、摘要：全樣本結果</h2>
@@ -386,10 +409,17 @@ SP500 {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval
 </div>
 
 <h2>三、兩段子時期對照</h2>
-<div class="callout">
-  子時期切點定在 <b>2020-07-15</b>，這是CNN官方API實測得到的資料下限（不是原先假設的2021-02-01；
-  API對早於2020-07-14的start_date一律回傳500錯誤，2020-07-15是後端資料庫本身的下限，不是「近一年」
-  這種滾動窗口限制）。因此「第三方重建期間」與「官方API期間」的切點，直接對齊資料可信度真正改變的那一天。
+<div class="callout warn">
+  <b>切點是2021-02-01，這個日期背後有一段修正過程，值得寫清楚：</b>一開始只測試CNN官方API的
+  HTTP狀態碼，發現不管帶多早的start_date，2020-07-14以前一律回傳500、2020-07-15開始回傳200，
+  於是把切點設在2020-07-15。後來畫「CNN指數時間軸 vs 股價走勢」對照圖時，肉眼發現2020年那段
+  官方資料長時間打平在一條直線上，回頭檢查數值才發現：2020-07-15~2021-01-21這段「官方」資料裡，
+  有<b>122天的分數被打死在50.0</b>（後端某個計算窗口顯然還沒暖機完成，回傳的是佔位值，不是真的
+  逐日計算結果），中間還夾雜幾天離譜的近0異常值。HTTP 200不代表資料是真的——這是分析過程中一個
+  真實的方法論錯誤，現在已修正：<b>2021-01-22之後才是連續、真正逐日計算的官方資料</b>，切點抓
+  2021-02-01（留幾天緩衝），2020-07-15~2021-01-31這段改回用第三方重建資料頂替。巧的是，這個
+  修正後的日期，跟使用者原信最早提出的假設「2021-02-01」幾乎一模一樣——一開始以為「實測結果比
+  假設更早」，其實是實測方法本身不夠嚴謹（只測了HTTP狀態，沒檢查數值），原本的假設反而更準。
 </div>
 <div class="card">
   <div class="table-wrap"><table>
@@ -415,30 +445,35 @@ SP500 {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval
   <h3>CNN指數（股市版）</h3>
   <div class="table-wrap"><table>
     <tr><th>期間</th><th>來源</th><th>可信度</th></tr>
-    <tr><td>2011-01-03 ~ 2020-07-14</td><td>第三方重建（GitHub: <code>whit3rabbit/fear-greed-data</code>）</td><td>中——見下方量化驗證</td></tr>
-    <tr><td>2020-07-15 ~ 今</td><td>CNN官方API（<code>production.dataviz.cnn.io</code>）</td><td>高——官方即時資料</td></tr>
+    <tr><td>2011-01-03 ~ 2021-01-31</td><td>第三方重建（GitHub: <code>whit3rabbit/fear-greed-data</code>）</td><td>中——見下方說明</td></tr>
+    <tr><td>2021-02-01 ~ 今</td><td>CNN官方API（<code>production.dataviz.cnn.io</code>）</td><td>高——官方即時資料</td></tr>
   </table></div>
   <p>合併後的資料表（<code>data/fg_merged.csv</code>）在每一列都標註 <code>source</code> 欄位
-  （<code>official</code> / <code>reconstructed</code>），兩種可信度的資料在分析全程都可以被獨立篩選、不會被混在一起處理。</p>
+  （<code>official</code> / <code>reconstructed</code>），兩種可信度的資料在分析全程都可以被獨立篩選、不會被混在一起處理。
+  官方API裡2021-02-01之前那122天佔位值（見上方callout）已經被抓出來剔除，不使用。</p>
 
-  <h3>重建準確度驗證（不只是文字警語，用重疊期實際比對）</h3>
-  <p>第三方重建資料在近年其實持續更新到今天，因此可以拿 2020-07-15 之後「官方API」與「第三方重建」
-  同時存在的重疊期，直接比較兩者準確度：</p>
+  <h3>重建準確度「驗證」——以及為什麼這個驗證其實驗不出2011~2021那段的準確度</h3>
+  <p>第三方重建資料本身持續更新到今天，理論上可以拿2021-02-01之後「官方API」與「第三方重建」
+  同時存在的重疊期，比較兩者準確度：</p>
   <div class="table-wrap"><table>
     <tr><th>重疊期</th><th>樣本數</th><th>Spearman相關</th><th>平均絕對誤差 MAE</th><th>均方根誤差 RMSE</th><th>情緒標籤(fear/greed等)完全一致率</th></tr>
     <tr>
       <td>{val['overlap_start']} ~ {val['overlap_end']}</td>
       <td>{val['n_overlap_days']}</td>
-      <td class="quality-good">{val['spearman_rho']:.3f}</td>
-      <td>{val['mae']:.2f}分</td>
-      <td>{val['rmse']:.2f}分</td>
+      <td class="quality-good">{val['spearman_rho']:.4f}</td>
+      <td>{val['mae']:.4f}分</td>
+      <td>{val['rmse']:.4f}分</td>
       <td>{val['rating_exact_match_rate']:.1%}</td>
     </tr>
   </table></div>
-  <p class="sub">第三方重建資料跟官方資料在等級相關上高度一致（ρ≈0.95），平均誤差約1.5分（滿分100分），
-  但RMSE比MAE明顯大，代表存在少數誤差較大的離群日；情緒標籤（fear/greed等5級）完全一致率約92.5%，
-  表示約每13天會有一天標籤等級對不上（例如官方判「fear」但重建資料判「neutral」）。整體而言重建資料
-  可用但不是逐日精確複製官方數字，這是2011~2020-07這段第三方重建期間結果解讀時要放在心上的落差。</p>
+  <p class="sub"><b>結果幾乎是完美吻合（ρ≈1.0000、MAE≈0）——但這不是好消息，是這個驗證方法本身
+  失效的訊號。</b>完美吻合最合理的解釋是：這個GitHub第三方資料源，至少在近期，本身就是每天直接
+  照抄／爬取CNN官方那個API，不是獨立用其他方法重建的。換句話說，2021-02-01之後的「重疊比對」，
+  比的其實是同一個資料源跟它自己，<b>不能拿來證明2011~2021這段真正靠獨立方法重建的資料有多準確</b>——
+  那段用的多半是別的方法（例如從舊版網頁存檔或不同端點回推），跟近期這種「直接抄官方」的做法不是
+  同一回事，準確度沒辦法用這個重疊期去反推。誠實的說法是：<b>2011~2021這段第三方重建資料的實際
+  準確度，這份報告沒有找到獨立的驗證方式</b>，只能提醒讀者這段的可信度低於官方API期間，程度未知，
+  解讀時要留更大的安全邊際，不宜過度解讀那段的細節數字。</p>
   <p class="sub">另外，第三方原始資料在2020-06-06 ~ 2020-07-08（約33天）之間有一段缺漏（該來源本身缺這段），
   已如實反映在合併後的資料表裡（缺漏期間沒有列），沒有用插值或前值填補去掩蓋這個缺口。</p>
 
@@ -485,7 +520,8 @@ SP500 {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval
     但明確寫在這裡，不要讓讀者誤以為兩種分析用同一套取樣邏輯。</li>
     <li><b>訊號時間點：</b>用第t日收盤時的CNN指數分數，對照第t日收盤到第t+20個交易日收盤的價格報酬，
     不使用未來資料。</li>
-    <li><b>子時期切點：</b>2020-07-15，對齊CNN官方API實測資料下限（見上方「資料來源與可信度」）。</li>
+    <li><b>子時期切點：</b>2021-02-01，對齊CNN官方API真正可信的資料下限（見上方「資料來源與可信度」
+    裡2020-07-15~2021-01-21佔位值段落的說明）。</li>
     <li><b>樣本數標示：</b>分桶圖表裡每一根柱子都標n值；n&lt;10的分組會用橘色標示、代表可信度較低
     （本次分桶因為改用逐日重疊資料，實際上每組樣本數都遠高於10，橘色警示在這次的圖表裡應該不會出現）。</li>
     <li><b>無條件基準線／超額報酬：</b>不管CNN分數是多少，同一段期間「隨便挑一天」往後看N日的
@@ -514,11 +550,13 @@ SP500 {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval
     常見的p&lt;0.05統計顯著門檻。
   </p>
   <p>
-    拆開兩段子時期看，NQ的方向{stability_note_nq}、SP500的方向{stability_note_spx}，
-    但官方API期間（2020-07至今）的樣本數只有約{p2['n_rows']}個交易日、不重疊取樣後IC只剩約
-    {p2['ic']['NQ']['n']}筆，統計檢定力本來就偏低，加上這段期間本身經歷2020疫情復甦、2022升息、
-    2023-2025AI狂熱等多個風格迥異的市場階段，IC結果的穩健性需要更保守看待，不宜只憑這一段的數字
-    就對訊號下強烈結論。
+    拆開兩段子時期看，NQ的方向{stability_note_nq}、SP500的方向{stability_note_spx}，官方API期間
+    （2021-02至今）修正資料品質問題之後，IC強度（NQ {p2['ic']['NQ']['rho']:+.3f}、SP500
+    {p2['ic']['SPX']['rho']:+.3f}）其實跟第三方重建期間相當接近，比修正前的版本（當時被佔位值
+    污染、NQ的IC被拉到接近0）更穩定、更可信。不過官方期樣本數仍只有約{p2['n_rows']}個交易日、
+    不重疊取樣後IC只剩約{p2['ic']['NQ']['n']}筆，統計檢定力本來就偏低，加上這段期間本身經歷
+    2022升息、2023-2025AI狂熱等風格迥異的市場階段，IC結果的穩健性還是需要保守看待，不宜只憑
+    這一段的數字就對訊號下強烈結論。
   </p>
   <p>
     NQ與SP500兩組結果之間，因為SP500本身是CNN指數部分計算輸入的來源，SP500那組IC不能被當成
