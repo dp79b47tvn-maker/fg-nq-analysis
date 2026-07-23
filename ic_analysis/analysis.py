@@ -138,12 +138,16 @@ def bucket_analysis(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
 
 
 # ---------------------------------------------------------------- 3. 中間分數的規律性(排除頭尾兩組)
-def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
+MIDDLE_EXCLUDE_EACH_END = 4  # 前後各排除幾組(不是只排除頭尾各1組)，剩中間段=20-2*4=12組
+
+
+def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS,
+                    exclude_each_end=MIDDLE_EXCLUDE_EACH_END):
     """先用跟主IC分析完全一樣的不重疊取樣(保留取樣間距，不要在篩選後才取樣，
     不然會破壞『每隔horizon天才取一筆』的前提、重新引入重疊問題)，取完樣之後
-    才把最恐懼(第1組)、最貪婪(最後一組)的樣本點剔除，只看中間那些組『分數
-    高低』跟『未來報酬』還有沒有單調關係——回答『拿掉頭尾兩極端之後，中間
-    是不是就沒有方向性了』這個問題。"""
+    才把最恐懼端、最貪婪端各exclude_each_end組的樣本點剔除，只看中間那些組
+    『分數高低』跟『未來報酬』還有沒有單調關係——回答『拿掉頭尾兩端的極端讀數
+    之後，中間是不是就沒有方向性了』這個問題。"""
     sub = df[["score"]].copy()
     sub["fwd"] = forward_return(df[target_col], horizon)
     sub = sub.dropna()
@@ -155,7 +159,10 @@ def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
         return None
     n_actual = sub["bucket"].nunique()
     sampled = sub.iloc[::horizon]
-    middle = sampled[(sampled["bucket"] != 0) & (sampled["bucket"] != n_actual - 1)]
+    middle = sampled[
+        (sampled["bucket"] >= exclude_each_end)
+        & (sampled["bucket"] <= n_actual - 1 - exclude_each_end)
+    ]
     if len(middle) < 8:
         return {"rho": None, "pval": None, "n": len(middle)}
     rho, pval = stats.spearmanr(middle["score"], middle["fwd"])
@@ -168,21 +175,21 @@ def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
     }
 
 
-def middle_bucket_chart_base64(bucket_result, title):
-    """重用主分桶表，只是把第1組(最恐懼)跟最後一組(最貪婪)拿掉，放大看中間段。"""
+def middle_bucket_chart_base64(bucket_result, title, exclude_each_end=MIDDLE_EXCLUDE_EACH_END):
+    """重用主分桶表，把最恐懼端、最貪婪端各exclude_each_end組拿掉，放大看中間段。"""
     if bucket_result is None:
         return None
     grp = bucket_result["table"]
-    if len(grp) < 4:
+    if len(grp) < exclude_each_end * 2 + 2:
         return None
-    mid = grp.iloc[1:-1].copy()
+    mid = grp.iloc[exclude_each_end:len(grp) - exclude_each_end].copy()
     n_bars = max(len(grp) - 1, 1)
     fig, ax = plt.subplots(figsize=(9.5, 3.2), dpi=140)
-    colors = [_lerp_hex(FEAR_HEX, GREED_HEX, (i + 1) / n_bars) for i in range(len(mid))]
+    colors = [_lerp_hex(FEAR_HEX, GREED_HEX, (i + exclude_each_end) / n_bars) for i in range(len(mid))]
     bars = ax.bar(mid["label"], mid["excess_fwd_ret"], color=colors, width=0.72)
     ax.axhline(0, color="#3a3a36", linewidth=1.1)
     ax.set_ylabel("超額報酬 (%)\n（減去同期無條件平均）", fontsize=8.5)
-    ax.set_xlabel("CNN指數分數分桶（已排除第1組最恐懼、最後一組最貪婪）", fontsize=9)
+    ax.set_xlabel(f"CNN指數分數分桶（已排除最恐懼端與最貪婪端各{exclude_each_end}組）", fontsize=9)
     ax.set_title(title, fontsize=9.5)
     ax.tick_params(axis="x", labelsize=7.5)
     ax.tick_params(axis="y", labelsize=8)
