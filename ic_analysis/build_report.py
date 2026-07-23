@@ -127,6 +127,32 @@ def build():
         <div>{chart_img('full', 'SPX', 'middle_chart_base64')}</div>
       </div>"""
 
+    # ---- 不同持有期的訊號強度掃描 ----
+    hs = r.get("horizon_scan", {})
+    horizon_scan_img = (
+        f"<img src='data:image/png;base64,{hs['chart_base64']}' style='width:100%;max-width:820px;'/>"
+        if hs.get("chart_base64") else "<p class='dim'>（無法產生持有期掃描圖）</p>"
+    )
+
+    def horizon_scan_rows(tcol):
+        rows = ""
+        for row in hs.get(tcol, []):
+            ic = row["ic"]
+            sig = ic is not None and ic.get("pval") is not None and ic["pval"] < 0.05
+            rho_txt = f"{ic['rho']:+.3f}" if ic and ic.get("rho") is not None else "—"
+            pval_txt = f"{ic['pval']:.3f}" if ic and ic.get("pval") is not None else "—"
+            rho_cls = "fear-tilt" if (ic and ic.get("rho") or 0) < 0 else "greed-tilt"
+            fear_txt = f"{row['fear_excess']:+.2f}%" if row["fear_excess"] is not None else "—"
+            greed_txt = f"{row['greed_excess']:+.2f}%" if row["greed_excess"] is not None else "—"
+            rows += f"""
+            <tr>
+              <td>{row['horizon']}</td>
+              <td class="{rho_cls}">{rho_txt}{' *' if sig else ''}<br><span class="sub">p={pval_txt}, n={ic['n'] if ic else '—'}</span></td>
+              <td class="fear-tilt">{fear_txt}</td>
+              <td class="greed-tilt">{greed_txt}</td>
+            </tr>"""
+        return rows
+
     # ---- 策略回測 ----
     def fmt_metric(m):
         if m is None:
@@ -416,7 +442,72 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   三套策略的相對表現可能完全不同——這是用歷史回測評估任何時機策略時都有的限制，不是這個指數獨有的問題。
 </div>
 
-<h2>三、兩段子時期對照</h2>
+<h2>三、不同持有期的訊號強度：短線到底多短算數？</h2>
+<div class="callout">
+  前面全部分析都固定用20個交易日（約一個月）當持有期。這裡把持有期從3天掃到90天
+  （3、5、10、15、20、30、40、60、90個交易日），同一套IC與分桶方法論在每個持有期各跑一次，
+  直接回答「這個訊號在多短、多長的持有期內才看得出東西」，而不是只看單一個20日窗口的結果。
+</div>
+<div style="text-align:center;">{horizon_scan_img}</div>
+
+<h3>NQ=F 逐持有期數字</h3>
+<div class="table-wrap"><table>
+  <tr><th>持有期（交易日）</th><th>全樣本IC（0~100分整體）</th>
+      <th>第1組（最恐懼）超額報酬</th><th>最後一組（最貪婪）超額報酬</th></tr>
+  {horizon_scan_rows('NQ')}
+</table></div>
+<p class="sub">* p&lt;0.05。超額報酬＝該分組平均未來報酬減去同期無條件平均（見第一節說明），分桶用逐日重疊資料。</p>
+
+<div class="callout warn">
+  <b>答案跟直覺可能相反：這個訊號不是短線訊號，反而更像中長線訊號。</b>
+  三個觀察：
+  <ul>
+    <li><b>整體IC在任何持有期都沒有達到統計顯著</b>（3天到90天，p值全部大於0.1，大部分甚至大於0.3）——
+    不是「短線比較有效、長線比較沒用」，而是不管持有期長短，CNN分數對「整條0~100分」的區辨力
+    始終偏弱，這點在3天、20天、90天都一樣。</li>
+    <li><b>最恐懼那組的超額報酬，是隨著持有期拉長而愈來愈明顯，不是愈來愈短愈準：</b>
+    3天只有+0.11%，5天甚至轉負（-0.04%），10天+0.40%，20天+1.80%，一路到90天累積到+5.36%。
+    如果「恐懼買入」這個效應是真的，看起來比較像是「市場從恐慌中花數週到數月慢慢修復」的中期現象，
+    不是「恐慌隔天就反彈」的短線現象——3~5天的窗口幾乎看不到任何優勢。</li>
+    <li><b>最貪婪那組的超額報酬，要拉長到60天以上才轉負</b>（40天以前都還是正的，60天-0.93%、
+    90天-1.85%）。意思是：如果貪婪之後真的有「退燒」，這個退燒也是要數個月的時間才會顯現，
+    不是進場後幾天內就會發生的事。</li>
+  </ul>
+  SP500的型態完全一樣（最恐懼超額報酬從3天的+0.02%一路爬升到90天的+3.09%；最貪婪超額報酬在
+  40天轉負、90天來到-3.63%），不是NQ單獨的巧合。
+</div>
+
+<h3>那「不同分數，短線該怎麼操作」這個問題，誠實的答案是什麼？</h3>
+<div class="card">
+  <table>
+    <tr><th>CNN分數</th><th>幾天內的短線（3~10個交易日）</th><th>幾週到幾個月（20~90個交易日）</th></tr>
+    <tr>
+      <td><b>&lt;25 最恐懼</b></td>
+      <td class="dim">沒有可靠的短線優勢（3~5天的超額報酬接近0，甚至可能為負）</td>
+      <td class="fear-tilt">歷史上優勢會逐漸浮現，20天以上有一致、跨標的的正超額報酬，但仍非統計顯著、且第三方重建期間資料可信度較低，要打折扣</td>
+    </tr>
+    <tr>
+      <td><b>25~75 中性</b></td>
+      <td class="dim">沒有可靠規律（見上一節：連拿掉頭尾各4組後方向都不穩定）</td>
+      <td class="dim">同樣沒有可靠規律，不建議把中性分數本身當成操作依據</td>
+    </tr>
+    <tr>
+      <td><b>&gt;75 最貪婪</b></td>
+      <td class="dim">沒有證據支持放空或大幅減碼（3~40天超額報酬多為正）</td>
+      <td class="greed-tilt">歷史上60天以上開始出現負超額報酬，但樣本已經偏薄（見上表n值），不宜當成精準的出場時間點</td>
+    </tr>
+  </table>
+  <p class="sub">
+    整體來說：這個指數比較適合當「情緒溫度計」搭配數週到數月的視野去解讀，不太適合當成幾天內
+    進出的短線交易訊號——短線窗口（3~10天）不管在哪個分數區間，超額報酬都小、方向也不穩定。
+    如果操作目標真的是短線（幾天內進出），這份分析沒有找到支持這個指數有用的證據；如果目標是
+    在極端恐懼時提高警覺、考慮分批布局，並且有耐心持有數週到數月，歷史數據方向上支持這個做法，
+    但強度仍然不到能拿來精準計時進出場的程度——上一節的策略回測已經證明，即使方向正確，
+    真的拿來決定持倉去留，長期報酬還是大幅跑輸單純買進持有。
+  </p>
+</div>
+
+<h2>四、兩段子時期對照</h2>
 <div class="callout warn">
   <b>切點是2021-02-01，這個日期背後有一段修正過程，值得寫清楚：</b>一開始只測試CNN官方API的
   HTTP狀態碼，發現不管帶多早的start_date，2020-07-14以前一律回傳500、2020-07-15開始回傳200，
@@ -448,7 +539,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   差異本身就可能只是統計雜訊。
 </div>
 
-<h2>四、資料來源與可信度</h2>
+<h2>五、資料來源與可信度</h2>
 <div class="card">
   <h3>CNN指數（股市版）</h3>
   <div class="table-wrap"><table>
@@ -492,7 +583,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   序列跟SP500的「現貨指數」在資料性質上不是完全對等的比較基礎——解讀時建議把這一點也算進去。</p>
 </div>
 
-<h2>五、NQ 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
+<h2>六、NQ 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
 <div class="callout">
   CNN恐懼貪婪指數的七項分項成分（動能、強度、廣度、避險需求、垃圾債需求、選擇權Put/Call、波動度VIX）
   裡，動能、強度、廣度這幾項本身就是直接拿標普500或紐約證交所相關資料算出來的。這代表：
@@ -515,7 +606,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   </table></div>
 </div>
 
-<h2>六、方法論</h2>
+<h2>七、方法論</h2>
 <div class="card">
   <ul>
     <li><b>IC分析：</b>CNN指數分數 vs 未來20個交易日報酬，Spearman等級相關係數，一律用「不重疊取樣」
@@ -547,7 +638,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   </ul>
 </div>
 
-<h2>七、結論</h2>
+<h2>八、結論</h2>
 <div class="card">
   <p>
     全樣本下，CNN恐懼貪婪指數（股市版）對NQ與SP500未來20個交易日報酬的IC分別為

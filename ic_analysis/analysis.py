@@ -203,6 +203,73 @@ def middle_bucket_chart_base64(bucket_result, title, exclude_each_end=MIDDLE_EXC
     return fig_to_base64(fig)
 
 
+# ---------------------------------------------------------------- 3b. 不同持有期的訊號強度掃描
+HORIZON_SCAN_SET = [3, 5, 10, 15, 20, 30, 40, 60, 90]
+
+
+def horizon_scan(df, target_col, horizons=HORIZON_SCAN_SET, buckets=N_BUCKETS):
+    """固定用全樣本，把IC分析／分桶分析在一整組不同持有期(3~90個交易日)上各跑一次，
+    直接回答『這個訊號到底在多短/多長的持有期內有參考價值』，而不是只看單一個20日窗口。
+    每個horizon都用該horizon各自的『不重疊取樣』(採樣間距=horizon)，方法論跟主IC分析
+    完全一致，只是horizon本身當成變數掃過去。"""
+    rows = []
+    for h in horizons:
+        ic = non_overlapping_ic(df, target_col, horizon=h)
+        bucket = bucket_analysis(df, target_col, horizon=h, buckets=buckets)
+        fear_excess = greed_excess = fear_n = greed_n = None
+        if bucket is not None:
+            grp = bucket["table"]
+            fear_excess = float(grp.iloc[0]["excess_fwd_ret"])
+            greed_excess = float(grp.iloc[-1]["excess_fwd_ret"])
+            fear_n = int(grp.iloc[0]["n"])
+            greed_n = int(grp.iloc[-1]["n"])
+        rows.append({
+            "horizon": h, "ic": ic,
+            "fear_excess": fear_excess, "greed_excess": greed_excess,
+            "fear_n": fear_n, "greed_n": greed_n,
+        })
+    return rows
+
+
+def horizon_scan_chart_base64(scan_nq, scan_spx, title):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9.5, 5.6), dpi=140, sharex=True,
+                                     gridspec_kw={"hspace": 0.12})
+    horizons = [r["horizon"] for r in scan_nq]
+
+    for scan, color, label in [(scan_nq, "#23262B", "NQ=F"), (scan_spx, "#8A8577", "^GSPC")]:
+        rhos = [r["ic"]["rho"] if r["ic"] and r["ic"]["rho"] is not None else float("nan") for r in scan]
+        sig = [r["ic"] is not None and r["ic"]["pval"] is not None and r["ic"]["pval"] < 0.05 for r in scan]
+        ax1.plot(horizons, rhos, color=color, linewidth=1.3, marker="o", markersize=4, label=label)
+        for x, y, s in zip(horizons, rhos, sig):
+            if s:
+                ax1.scatter([x], [y], s=70, facecolors="none", edgecolors=color, linewidths=1.6, zorder=5)
+    ax1.axhline(0, color="#9a9488", linewidth=0.8)
+    ax1.set_ylabel("IC（Spearman rho）", fontsize=9)
+    ax1.set_title(title, fontsize=10)
+    ax1.legend(loc="upper right", fontsize=8, frameon=False, ncol=2)
+    ax1.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax1.spines[spine].set_visible(False)
+
+    for scan, ls, label in [(scan_nq, "-", "NQ=F 第1組(最恐懼)超額報酬"), (scan_spx, "--", "^GSPC 第1組(最恐懼)超額報酬")]:
+        vals = [r["fear_excess"] if r["fear_excess"] is not None else float("nan") for r in scan]
+        ax2.plot(horizons, vals, color=FEAR_HEX, linewidth=1.3, linestyle=ls, marker="o", markersize=4, label=label)
+    for scan, ls, label in [(scan_nq, "-", "NQ=F 最後一組(最貪婪)超額報酬"), (scan_spx, "--", "^GSPC 最後一組(最貪婪)超額報酬")]:
+        vals = [r["greed_excess"] if r["greed_excess"] is not None else float("nan") for r in scan]
+        ax2.plot(horizons, vals, color=GREED_HEX, linewidth=1.3, linestyle=ls, marker="o", markersize=4, label=label)
+    ax2.axhline(0, color="#9a9488", linewidth=0.8)
+    ax2.set_ylabel("超額報酬 (%)\n（vs 同期無條件平均）", fontsize=8.5)
+    ax2.set_xlabel("持有期（交易日）", fontsize=9)
+    ax2.legend(loc="upper right", fontsize=7, frameon=False, ncol=2)
+    ax2.tick_params(axis="x", labelsize=8)
+    ax2.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax2.spines[spine].set_visible(False)
+
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
 # ---------------------------------------------------------------- 4. 策略回測
 def build_strategy_returns(df, target_col, mode):
     """訊號用第t日收盤分數決定，套用在第t+1日的報酬（shift(1)，不偷看未來）。
@@ -499,6 +566,14 @@ def run_all():
     timeline_chart, timeline_stats = timeline_comparison_chart_base64(df)
     results["timeline_chart_base64"] = timeline_chart
     results["timeline_stats"] = timeline_stats
+
+    # ---------------------------------------------------- 不同持有期的訊號強度掃描（全樣本）
+    scan_nq = horizon_scan(df, "NQ")
+    scan_spx = horizon_scan(df, "SPX")
+    results["horizon_scan"] = {
+        "NQ": scan_nq, "SPX": scan_spx,
+        "chart_base64": horizon_scan_chart_base64(scan_nq, scan_spx, "不同持有期的IC與極端分組超額報酬（全樣本）"),
+    }
 
     # ---------------------------------------------------- 策略回測（全樣本，daily rebalance）
     results["backtest"] = {}
