@@ -94,6 +94,21 @@ def non_overlapping_ic(df, target_col, horizon=HORIZON):
     }
 
 
+def unconditional_stats(df, target_col, horizon=HORIZON):
+    """不管CNN分數是多少,這段期間『隨便挑一天』往後看horizon個交易日的報酬長怎樣。
+    用來當分桶圖的『地心引力』基準線——大盤長期上漲期，這個數字天生就是正的，
+    分桶柱狀圖疊在這個基準之上，柱子沒有跨過0不代表訊號無效，見報告說明。"""
+    fwd = forward_return(df[target_col], horizon).dropna()
+    if len(fwd) == 0:
+        return None
+    return {
+        "mean": float(fwd.mean()),
+        "median": float(fwd.median()),
+        "pct_negative": float((fwd < 0).mean() * 100),
+        "n": int(len(fwd)),
+    }
+
+
 # ---------------------------------------------------------------- 2. 分位數分桶(逐日重疊)
 def bucket_analysis(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
     sub = df[["score"]].copy()
@@ -113,8 +128,12 @@ def bucket_analysis(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
     ).reset_index()
     grp["label"] = [f"{i+1}" for i in range(len(grp))]
     grp["low_confidence"] = grp["n"] < LOW_N_WARN
+    uncond = unconditional_stats(df, target_col, horizon)
+    if uncond is not None:
+        grp["excess_fwd_ret"] = grp["mean_fwd_ret"] - uncond["mean"]
     mono_rho, _ = stats.spearmanr(grp["bucket"], grp["mean_fwd_ret"]) if len(grp) >= 3 else (None, None)
-    return {"table": grp, "monotonicity": float(mono_rho) if pd.notna(mono_rho) else None}
+    return {"table": grp, "monotonicity": float(mono_rho) if pd.notna(mono_rho) else None,
+            "unconditional": uncond}
 
 
 FEAR_HEX = "#3E5C76"   # 分桶1端：最恐懼
@@ -156,6 +175,78 @@ def bucket_chart_base64(bucket_result, title):
     return fig_to_base64(fig)
 
 
+def excess_bucket_chart_base64(bucket_result, title):
+    """跟bucket_chart_base64同一份資料，但Y軸改成『扣掉這段期間無條件平均20日報酬』後的
+    超額報酬——0線代表『跟隨便挑一天沒兩樣』，負的才代表這組真的比同期平均還差。"""
+    if bucket_result is None or bucket_result.get("unconditional") is None:
+        return None
+    grp = bucket_result["table"]
+    uncond = bucket_result["unconditional"]
+    n_bars = max(len(grp) - 1, 1)
+    fig, ax = plt.subplots(figsize=(9.5, 3.4), dpi=140)
+    colors = [_lerp_hex(FEAR_HEX, GREED_HEX, i / n_bars) for i in range(len(grp))]
+    bars = ax.bar(grp["label"], grp["excess_fwd_ret"], color=colors, width=0.72,
+                   edgecolor=[WARN_HEX if lc else "none" for lc in grp["low_confidence"]],
+                   linewidth=[2.2 if lc else 0 for lc in grp["low_confidence"]],
+                   hatch=["///" if lc else None for lc in grp["low_confidence"]])
+    ax.axhline(0, color="#3a3a36", linewidth=1.1)
+    ax.axhline(0, color="#9a9488", linewidth=0.6, linestyle=(0, (1, 1)))
+    ax.set_ylabel("超額報酬 (%)\n（減去同期無條件平均）", fontsize=8.5)
+    ax.set_xlabel("CNN指數分數分桶（1=最恐懼　→　20=最貪婪）", fontsize=9)
+    ax.set_title(f"{title}\n同期無條件平均{HORIZON}日報酬基準線＝{uncond['mean']:+.2f}%（0線＝這條基準）",
+                 fontsize=9)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    for bar, v, n in zip(bars, grp["excess_fwd_ret"], grp["n"]):
+        ax.annotate(f"{v:+.2f}\nn={n}", (bar.get_x() + bar.get_width() / 2, v),
+                    textcoords="offset points", xytext=(0, 4 if v >= 0 else -22),
+                    ha="center", fontsize=6.5, linespacing=1.3)
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
+def price_trend_chart_base64(df, periods):
+    """NQ=F、SP500 全樣本價格走勢（指數化為期初=100，對數座標），用來直接說明分桶圖
+    疊在多大的『大盤長期上漲』基準之上——不是抽象的一句話，讀者可以直接看到那條曲線。"""
+    fig, ax = plt.subplots(figsize=(9.5, 3.6), dpi=140)
+    nq_idx = df["NQ"] / df["NQ"].iloc[0] * 100
+    spx_idx = df["SPX"] / df["SPX"].iloc[0] * 100
+    ax.plot(df.index, nq_idx, color="#23262B", linewidth=1.3, label="NQ=F（那斯達克100期貨）")
+    ax.plot(df.index, spx_idx, color="#8A8577", linewidth=1.1,
+            linestyle="--", label="^GSPC（標普500指數）")
+    ax.set_yscale("log")
+    ax.set_ylabel("指數化價格（期初=100，對數座標）", fontsize=9)
+    for pname in ["period1_reconstructed", "period2_official"]:
+        boundary = pd.Timestamp(periods[pname]["date_range"][0])
+        if pname == "period2_official":
+            ax.axvline(boundary, color="#9a9488", linewidth=0.8, linestyle=":")
+            ax.annotate("官方API期間起點\n2020-07-15", (boundary, ax.get_ylim()[1]),
+                        fontsize=7, color="#6C7268", ha="left", va="top",
+                        xytext=(4, -4), textcoords="offset points")
+    nq_valid, spx_valid = nq_idx.dropna(), spx_idx.dropna()
+    nq_total = nq_valid.iloc[-1] - 100
+    spx_total = spx_valid.iloc[-1] - 100
+    nq_years = (nq_valid.index[-1] - nq_valid.index[0]).days / 365.25
+    spx_years = (spx_valid.index[-1] - spx_valid.index[0]).days / 365.25
+    nq_cagr = ((nq_valid.iloc[-1] / 100) ** (1 / nq_years) - 1) * 100
+    spx_cagr = ((spx_valid.iloc[-1] / 100) ** (1 / spx_years) - 1) * 100
+    years = nq_years
+    ax.set_title(
+        f"NQ=F 全期間累積 {nq_total:+.0f}%（年化 {nq_cagr:+.1f}%）　｜　"
+        f"SP500 全期間累積 {spx_total:+.0f}%（年化 {spx_cagr:+.1f}%）　（{years:.1f}年）",
+        fontsize=9.5,
+    )
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
 def fig_to_base64(fig):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -183,6 +274,9 @@ def run_all():
             chart = bucket_chart_base64(
                 bucket, f"{pname} | CNN指數分桶 vs 未來{HORIZON}日{TARGETS[tcol]}報酬"
             )
+            excess_chart = excess_bucket_chart_base64(
+                bucket, f"{pname} | 超額報酬版（vs 同期無條件平均）"
+            )
             if bucket is not None:
                 bucket["table"].to_csv(OUT_DIR / f"bucket_{pname}_{tcol}.csv", index=False)
                 results["periods"][pname]["bucket"][tcol] = {
@@ -190,9 +284,13 @@ def run_all():
                     "n_buckets": len(bucket["table"]),
                     "n_low_confidence": int(bucket["table"]["low_confidence"].sum()),
                     "chart_base64": chart,
+                    "excess_chart_base64": excess_chart,
+                    "unconditional": bucket["unconditional"],
                 }
             else:
                 results["periods"][pname]["bucket"][tcol] = None
+
+    results["price_trend_chart_base64"] = price_trend_chart_base64(df, results["periods"])
 
     with open(DATA_DIR / "reconstruction_validation.json") as f:
         results["reconstruction_validation"] = json.load(f)

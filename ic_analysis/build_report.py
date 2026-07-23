@@ -50,11 +50,11 @@ def build():
           <td>{fmt_mono(pd_['bucket']['SPX'])}</td>
         </tr>"""
 
-    def chart_img(pname, tcol):
+    def chart_img(pname, tcol, key="chart_base64"):
         b = periods[pname]["bucket"][tcol]
-        if b is None or b.get("chart_base64") is None:
-            return "<p class='dim'>（無法產生此分桶圖）</p>"
-        return f"<img src='data:image/png;base64,{b['chart_base64']}' style='width:100%;max-width:760px;'/>"
+        if b is None or b.get(key) is None:
+            return "<p class='dim'>（無法產生此圖）</p>"
+        return f"<img src='data:image/png;base64,{b[key]}' style='width:100%;max-width:760px;'/>"
 
     full_charts = f"""
       <div class="chart-pair">
@@ -62,13 +62,36 @@ def build():
         <div>{chart_img('full', 'SPX')}</div>
       </div>"""
 
+    full_excess_charts = f"""
+      <div class="chart-pair">
+        <div>{chart_img('full', 'NQ', 'excess_chart_base64')}</div>
+        <div>{chart_img('full', 'SPX', 'excess_chart_base64')}</div>
+      </div>"""
+
+    price_trend_img = (
+        f"<img src='data:image/png;base64,{r['price_trend_chart_base64']}' "
+        f"style='width:100%;max-width:820px;'/>"
+        if r.get("price_trend_chart_base64") else "<p class='dim'>（無法產生走勢圖）</p>"
+    )
+
+    uncond_nq = full["bucket"]["NQ"]["unconditional"]
+    uncond_spx = full["bucket"]["SPX"]["unconditional"]
+
     period_compare_charts = ""
     for pname in ["period1_reconstructed", "period2_official"]:
+        u_nq = periods[pname]["bucket"]["NQ"]["unconditional"]
+        u_spx = periods[pname]["bucket"]["SPX"]["unconditional"]
         period_compare_charts += f"""
-      <h4>{PERIOD_LABELS[pname]}（{periods[pname]['date_range'][0]} ~ {periods[pname]['date_range'][1]}，n={periods[pname]['n_rows']}筆）</h4>
+      <h4>{PERIOD_LABELS[pname]}（{periods[pname]['date_range'][0]} ~ {periods[pname]['date_range'][1]}，n={periods[pname]['n_rows']}筆；
+      同期無條件平均20日報酬：NQ {u_nq['mean']:+.2f}%、SP500 {u_spx['mean']:+.2f}%）</h4>
       <div class="chart-pair">
         <div>{chart_img(pname, 'NQ')}</div>
         <div>{chart_img(pname, 'SPX')}</div>
+      </div>
+      <p class="sub">超額報酬版（扣掉上面這條同期基準線）：</p>
+      <div class="chart-pair">
+        <div>{chart_img(pname, 'NQ', 'excess_chart_base64')}</div>
+        <div>{chart_img(pname, 'SPX', 'excess_chart_base64')}</div>
       </div>"""
 
     # 方向一致性判斷
@@ -202,6 +225,37 @@ def build():
 <h3>全樣本20分位分桶（依CNN指數分數切20等分，看未來20日平均報酬）</h3>
 {full_charts}
 <p class="sub">分桶分析用逐日重疊資料計算（不做不重疊取樣），跟上面IC表用的「不重疊取樣」方法不同，理由見下方「方法論」段落。</p>
+
+<h3>為什麼最右邊（最貪婪）那組沒有變成負的？</h3>
+<div class="callout">
+  直覺上「貪婪時未來報酬應該轉差」，甚至轉負——但上面的圖裡，就連第20組（最貪婪）NQ與SP500的
+  未來20日平均報酬<b>仍然是正的</b>。原因是整條分桶曲線<b>疊在「大盤長期上漲」這個基準之上</b>，
+  不是以0為中心畫出來的。
+</div>
+<p>把CNN指數分數完全丟開，這15.5年裡「隨便挑一天」往後看20個交易日，平均報酬長這樣：</p>
+<div class="table-wrap"><table>
+  <tr><th></th><th>無條件平均20日報酬</th><th>中位數</th><th>報酬為負的比例</th></tr>
+  <tr><td>NQ=F</td><td class="greed-tilt">{uncond_nq['mean']:+.2f}%</td><td>{uncond_nq['median']:+.2f}%</td><td>{uncond_nq['pct_negative']:.1f}%</td></tr>
+  <tr><td>SP500</td><td class="greed-tilt">{uncond_spx['mean']:+.2f}%</td><td>{uncond_spx['median']:+.2f}%</td><td>{uncond_spx['pct_negative']:.1f}%</td></tr>
+</table></div>
+<p>這是2011~2026這段罕見長多頭的結果——下面是同一段期間NQ=F、SP500的實際走勢（對數座標）：</p>
+<div style="text-align:center;">{price_trend_img}</div>
+<p class="sub">NQ=F這15.5年累積漲了約1193%（年化約17.9%），SP500累積約490%（年化約12.1%）。
+在這種背景下，隨便挑一個交易日往後看20天，平均本來就已經是正的（NQ約+1.47%、SP500約+1.01%），
+而且六成以上的窗口都是正報酬。分桶柱狀圖每一根都疊在這個「地心引力」水位上，
+IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮」這個<b>相對關係</b>，不是「柱子有沒有跨過0」——
+就算訊號完全成立，貪婪那組理論上也只需要比恐懼那組矮，不一定要跌破0。</p>
+
+<h4>扣掉這條「地心引力」之後的乾淨版本</h4>
+<p>把每一組的平均報酬，減掉上面那條同期無條件平均基準線，0就代表「跟隨便挑一天沒兩樣」，
+負的才代表這組真的比同期平均還差：</p>
+{full_excess_charts}
+<p class="sub">扣掉基準線之後，中段到偏貪婪的分組（約第6~19組）大多轉為負的超額報酬，符合「恐懼相對較好、
+貪婪相對較差」的方向。但值得注意的是：<b>第20組（最極端貪婪）在超額報酬版本裡依然反彈回正值</b>，
+是全場數一數二高的一組——不是單調遞減到最低。這代表市場在最極端的貪婪階段，短期內經常
+<b>動能延續、繼續噴出</b>，不是立刻反轉向下；分桶分析捕捉到的比較像是「中段偏貪婪時動能開始減弱」，
+而不是「越貪婪就越應該賣出」這種單純的線性關係。這也是上面分桶單調性只有-0.3左右（方向對但不強）
+的原因之一。</p>
 
 <h2>二、兩段子時期對照</h2>
 <div class="callout">
