@@ -136,6 +136,136 @@ def bucket_analysis(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
             "unconditional": uncond}
 
 
+# ---------------------------------------------------------------- 3. 中間分數的規律性(排除頭尾兩組)
+def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS):
+    """先用跟主IC分析完全一樣的不重疊取樣(保留取樣間距，不要在篩選後才取樣，
+    不然會破壞『每隔horizon天才取一筆』的前提、重新引入重疊問題)，取完樣之後
+    才把最恐懼(第1組)、最貪婪(最後一組)的樣本點剔除，只看中間那些組『分數
+    高低』跟『未來報酬』還有沒有單調關係——回答『拿掉頭尾兩極端之後，中間
+    是不是就沒有方向性了』這個問題。"""
+    sub = df[["score"]].copy()
+    sub["fwd"] = forward_return(df[target_col], horizon)
+    sub = sub.dropna()
+    if len(sub) < buckets * 3:
+        return None
+    try:
+        sub["bucket"] = pd.qcut(sub["score"], buckets, labels=False, duplicates="drop")
+    except ValueError:
+        return None
+    n_actual = sub["bucket"].nunique()
+    sampled = sub.iloc[::horizon]
+    middle = sampled[(sampled["bucket"] != 0) & (sampled["bucket"] != n_actual - 1)]
+    if len(middle) < 8:
+        return {"rho": None, "pval": None, "n": len(middle)}
+    rho, pval = stats.spearmanr(middle["score"], middle["fwd"])
+    return {
+        "rho": float(rho) if pd.notna(rho) else None,
+        "pval": float(pval) if pd.notna(pval) else None,
+        "n": len(middle),
+        "n_full_sample": len(sampled),
+        "score_range": [float(middle["score"].min()), float(middle["score"].max())],
+    }
+
+
+def middle_bucket_chart_base64(bucket_result, title):
+    """重用主分桶表，只是把第1組(最恐懼)跟最後一組(最貪婪)拿掉，放大看中間段。"""
+    if bucket_result is None:
+        return None
+    grp = bucket_result["table"]
+    if len(grp) < 4:
+        return None
+    mid = grp.iloc[1:-1].copy()
+    n_bars = max(len(grp) - 1, 1)
+    fig, ax = plt.subplots(figsize=(9.5, 3.2), dpi=140)
+    colors = [_lerp_hex(FEAR_HEX, GREED_HEX, (i + 1) / n_bars) for i in range(len(mid))]
+    bars = ax.bar(mid["label"], mid["excess_fwd_ret"], color=colors, width=0.72)
+    ax.axhline(0, color="#3a3a36", linewidth=1.1)
+    ax.set_ylabel("超額報酬 (%)\n（減去同期無條件平均）", fontsize=8.5)
+    ax.set_xlabel("CNN指數分數分桶（已排除第1組最恐懼、最後一組最貪婪）", fontsize=9)
+    ax.set_title(title, fontsize=9.5)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    for bar, v, n in zip(bars, mid["excess_fwd_ret"], mid["n"]):
+        ax.annotate(f"{v:+.2f}", (bar.get_x() + bar.get_width() / 2, v),
+                    textcoords="offset points", xytext=(0, 3 if v >= 0 else -12),
+                    ha="center", fontsize=6.5)
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
+# ---------------------------------------------------------------- 4. 策略回測
+def build_strategy_returns(df, target_col, mode):
+    """訊號用第t日收盤分數決定，套用在第t+1日的報酬（shift(1)，不偷看未來）。
+    long_only_tilt：分數0分=100%多單，分數50分以上=空手(不放空)，線性內插。
+    long_short：跟bond_data_pipeline的position_size()公式一樣，分數100分=100%空單。
+    buy_hold：對照組，全程100%多單。"""
+    sub = df[["score", target_col]].copy().dropna()
+    sub["ret"] = sub[target_col].pct_change()
+    if mode == "buy_hold":
+        pos = pd.Series(1.0, index=sub.index)
+    elif mode == "long_only_tilt":
+        pos = ((50 - sub["score"]) / 50).clip(0, 1)
+    elif mode == "long_short":
+        pos = ((50 - sub["score"]) / 50).clip(-1, 1)
+    else:
+        raise ValueError(mode)
+    sub["pos"] = pos
+    sub["strat_ret"] = sub["pos"].shift(1) * sub["ret"]
+    return sub["strat_ret"].dropna(), sub["pos"]
+
+
+def strategy_metrics(strat_ret, avg_pos=None, periods_per_year=252):
+    strat_ret = strat_ret.dropna()
+    if len(strat_ret) < 60:
+        return None
+    cum = (1 + strat_ret).cumprod()
+    years = len(strat_ret) / periods_per_year
+    cagr = cum.iloc[-1] ** (1 / years) - 1
+    vol = strat_ret.std() * (periods_per_year ** 0.5)
+    sharpe = (strat_ret.mean() * periods_per_year) / vol if vol > 0 else None
+    downside = strat_ret[strat_ret < 0]
+    downside_vol = downside.std() * (periods_per_year ** 0.5) if len(downside) > 5 else None
+    sortino = (strat_ret.mean() * periods_per_year) / downside_vol if downside_vol else None
+    running_max = cum.cummax()
+    max_dd = (cum / running_max - 1).min()
+    return {
+        "total_return": float(cum.iloc[-1] - 1) * 100,
+        "cagr": float(cagr) * 100,
+        "vol": float(vol) * 100,
+        "sharpe": float(sharpe) if sharpe is not None else None,
+        "sortino": float(sortino) if sortino is not None else None,
+        "max_dd": float(max_dd) * 100,
+        "win_rate": float((strat_ret > 0).mean()) * 100,
+        "avg_abs_position": float(avg_pos.abs().mean()) if avg_pos is not None else None,
+        "n": len(strat_ret),
+        "years": float(years),
+    }
+
+
+def backtest_equity_chart_base64(curves, title):
+    fig, ax = plt.subplots(figsize=(9.5, 3.6), dpi=140)
+    style_map = {
+        "buy_hold": {"color": "#8A8577", "linestyle": "--", "label": "買進持有(對照組)"},
+        "long_only_tilt": {"color": FEAR_HEX, "linestyle": "-", "label": "恐懼多單/貪婪空手(不放空)"},
+        "long_short": {"color": GREED_HEX, "linestyle": "-", "label": "恐懼多單/貪婪放空(對稱)"},
+    }
+    for mode, cum in curves.items():
+        s = style_map.get(mode, {})
+        ax.plot(cum.index, cum.values, linewidth=1.3, **s)
+    ax.set_yscale("log")
+    ax.set_ylabel("累積淨值（期初=100，對數座標）", fontsize=9)
+    ax.set_title(title, fontsize=9.5)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
 FEAR_HEX = "#3E5C76"   # 分桶1端：最恐懼
 GREED_HEX = "#B8863B"  # 分桶20端：最貪婪
 WARN_HEX = "#8E3B3B"   # 低樣本數警示（語意色，跟恐懼/貪婪主色分開）
@@ -266,9 +396,11 @@ def run_all():
             "ic": {},
             "bucket": {},
         }
+        results["periods"][pname]["middle_ic"] = {}
         for tcol in TARGETS:
             ic = non_overlapping_ic(pdf, tcol)
             results["periods"][pname]["ic"][tcol] = ic
+            results["periods"][pname]["middle_ic"][tcol] = middle_zone_ic(pdf, tcol)
 
             bucket = bucket_analysis(pdf, tcol)
             chart = bucket_chart_base64(
@@ -276,6 +408,9 @@ def run_all():
             )
             excess_chart = excess_bucket_chart_base64(
                 bucket, f"{pname} | 超額報酬版（vs 同期無條件平均）"
+            )
+            mid_chart = middle_bucket_chart_base64(
+                bucket, f"{pname} | 排除頭尾兩極端後的中間段（超額報酬版）"
             )
             if bucket is not None:
                 bucket["table"].to_csv(OUT_DIR / f"bucket_{pname}_{tcol}.csv", index=False)
@@ -285,12 +420,27 @@ def run_all():
                     "n_low_confidence": int(bucket["table"]["low_confidence"].sum()),
                     "chart_base64": chart,
                     "excess_chart_base64": excess_chart,
+                    "middle_chart_base64": mid_chart,
                     "unconditional": bucket["unconditional"],
                 }
             else:
                 results["periods"][pname]["bucket"][tcol] = None
 
     results["price_trend_chart_base64"] = price_trend_chart_base64(df, results["periods"])
+
+    # ---------------------------------------------------- 策略回測（全樣本，daily rebalance）
+    results["backtest"] = {}
+    for tcol in TARGETS:
+        curves = {}
+        metrics = {}
+        for mode in ["buy_hold", "long_only_tilt", "long_short"]:
+            strat_ret, pos = build_strategy_returns(df, tcol, mode)
+            m = strategy_metrics(strat_ret, avg_pos=pos)
+            metrics[mode] = m
+            if m is not None:
+                curves[mode] = (1 + strat_ret).cumprod() * 100
+        chart = backtest_equity_chart_base64(curves, f"策略回測（全樣本）| {TARGETS[tcol]}")
+        results["backtest"][tcol] = {"metrics": metrics, "chart_base64": chart}
 
     with open(DATA_DIR / "reconstruction_validation.json") as f:
         results["reconstruction_validation"] = json.load(f)

@@ -108,6 +108,62 @@ def build():
     stability_note_nq = "方向一致" if nq_consistent else "方向不一致"
     stability_note_spx = "方向一致" if spx_consistent else "方向不一致"
 
+    # ---- 中間分數規律性 ----
+    middle_rows = ""
+    for pname in ["full", "period1_reconstructed", "period2_official"]:
+        m = periods[pname]["middle_ic"]
+        rng = m["NQ"].get("score_range") if m.get("NQ") else None
+        rng_txt = f"{rng[0]:.0f}~{rng[1]:.0f}分" if rng else "—"
+        middle_rows += f"""
+        <tr>
+          <td>{PERIOD_LABELS[pname]}<br><span class='sub'>分數範圍 {rng_txt}</span></td>
+          <td>{fmt_rho(m['NQ'])}</td>
+          <td>{fmt_rho(m['SPX'])}</td>
+        </tr>"""
+
+    middle_charts_full = f"""
+      <div class="chart-pair">
+        <div>{chart_img('full', 'NQ', 'middle_chart_base64')}</div>
+        <div>{chart_img('full', 'SPX', 'middle_chart_base64')}</div>
+      </div>"""
+
+    # ---- 策略回測 ----
+    def fmt_metric(m):
+        if m is None:
+            return "<td class='dim'>—</td>" * 7
+        sharpe = f"{m['sharpe']:.2f}" if m['sharpe'] is not None else "—"
+        sortino = f"{m['sortino']:.2f}" if m['sortino'] is not None else "—"
+        avg_pos = f"{m['avg_abs_position']*100:.0f}%" if m['avg_abs_position'] is not None else "—"
+        return (
+            f"<td>{m['total_return']:+.0f}%</td><td>{m['cagr']:+.1f}%</td>"
+            f"<td>{m['vol']:.1f}%</td><td>{sharpe}</td><td>{sortino}</td>"
+            f"<td class='fear-tilt' style='color:var(--warn)'>{m['max_dd']:.1f}%</td><td>{avg_pos}</td>"
+        )
+
+    strategy_labels = {
+        "buy_hold": "買進持有（對照組）",
+        "long_only_tilt": "恐懼多單／貪婪空手（不放空）",
+        "long_short": "恐懼多單／貪婪放空（對稱，跟美債專案position_size公式相同）",
+    }
+
+    def backtest_table(tcol):
+        rows = ""
+        for mode in ["buy_hold", "long_only_tilt", "long_short"]:
+            m = r["backtest"][tcol]["metrics"].get(mode)
+            rows += f"<tr><td>{strategy_labels[mode]}</td>{fmt_metric(m)}</tr>"
+        return f"""
+        <div class="table-wrap"><table>
+          <tr><th>策略</th><th>累積報酬</th><th>年化CAGR</th><th>年化波動</th><th>Sharpe</th>
+              <th>Sortino</th><th>最大回撤</th><th>平均持倉水位</th></tr>
+          {rows}
+        </table></div>"""
+
+    def backtest_chart(tcol):
+        c = r["backtest"][tcol].get("chart_base64")
+        if not c:
+            return "<p class='dim'>（無法產生回測圖）</p>"
+        return f"<img src='data:image/png;base64,{c}' style='width:100%;max-width:820px;'/>"
+
     html = f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -257,7 +313,79 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 而不是「越貪婪就越應該賣出」這種單純的線性關係。這也是上面分桶單調性只有-0.3左右（方向對但不強）
 的原因之一。</p>
 
-<h2>二、兩段子時期對照</h2>
+<h3>把最恐懼、最貪婪兩組拿掉，中間段還有沒有方向性？</h3>
+<p>整條分桶曲線的「方向」，有多少其實是被頭尾兩組(第1組最恐懼、第20組最貪婪)撐起來的？
+把這兩組樣本剔除，只留中間段(約12~85分之間，依樣本區間略有不同)，重新算一次CNN分數
+跟未來報酬的Spearman相關(取樣方法跟主IC表完全一樣，一樣先做不重疊取樣、再篩掉頭尾)：</p>
+<div class="card">
+  <div class="table-wrap"><table>
+    <tr><th>樣本</th><th>中間段IC vs NQ=F</th><th>中間段IC vs SP500</th></tr>
+    {middle_rows}
+  </table></div>
+  <p class="sub">對照：拿掉頭尾前的全樣本IC是 NQ {fmt_rho(full['ic']['NQ'])}　SP500 {fmt_rho(full['ic']['SPX'])}（見上方摘要表）。</p>
+</div>
+<p>全樣本中間段的IC是 NQ {full['middle_ic']['NQ']['rho']:+.3f}（p={full['middle_ic']['NQ']['pval']:.3f}）、
+SP500 {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval']:.3f}）——
+比拿掉頭尾前的全樣本IC還要更弱，官方API期間NQ的中間段IC甚至幾乎是0
+（{p2['middle_ic']['NQ']['rho']:+.3f}，p={p2['middle_ic']['NQ']['pval']:.3f}）。
+把中間18組的超額報酬攤開來看也看不出穩定的階梯狀：</p>
+{middle_charts_full}
+<p class="sub">中間段長條圖高高低低沒有清楚的遞減趨勢(例如全樣本NQ第3組是+1.14%全場數一數二高，
+緊接著第6組就轉負-0.51%)。合理的解讀是：<b>這個訊號的「方向性」幾乎完全集中在頭尾兩個極端
+(尤其是最恐懼那組)，中間九成的分數區間本身沒有清楚、可靠的規律</b>——分數從35分走到65分，
+不太能說「未來報酬會怎麼系統性變化」，比較像雜訊。這對操作上的含意是：這個指數比較適合當
+「極端值警示器」（分數落到最低或最高的一小段區間時多留意），而不是拿來對整條0~100分做連續的
+「分數越低倉位越重」這種線性訊號——下一節的策略回測會直接驗證這個想法。</p>
+
+<h2>二、策略回測：把訊號變成一套可交易的策略，實際表現如何？</h2>
+<div class="callout">
+  上面的IC、分桶分析都是「事後統計」，回答的是「分數高低跟未來報酬有沒有關聯」；這裡改成回答一個更
+  貼近操作的問題：<b>如果真的照這個訊號建倉位，長期下來會不會贏過乾脆买進持有？</b>
+  三套策略都是用第t日收盤的CNN分數，決定第t+1日的持倉比例（不偷看未來），每天依分數重新調整：
+  <ul>
+    <li><b>買進持有（對照組）</b>：全程100%多單，不管分數。</li>
+    <li><b>恐懼多單／貪婪空手（不放空）</b>：分數0分＝100%多單、分數50分以上＝空手(0%)，中間線性內插——
+    直接操作化你的假設「恐懼買、貪婪不放空只是相對少賺」。</li>
+    <li><b>恐懼多單／貪婪放空（對稱）</b>：分數100分＝100%空單，跟美債恐懼貪婪儀表板專案
+    <code>position_size()</code> 用的公式完全一樣（<code>(50-分數)/50</code>），拿來對照「如果真的在
+    最貪婪放空，會發生什麼事」。</li>
+  </ul>
+</div>
+
+<h3>NQ=F 回測（全樣本，2011-01 ~ 2026-07）</h3>
+{backtest_table('NQ')}
+<div style="text-align:center;margin-top:10px;">{backtest_chart('NQ')}</div>
+
+<h3>SP500 回測（全樣本，2011-01 ~ 2026-07）</h3>
+{backtest_table('SPX')}
+<div style="text-align:center;margin-top:10px;">{backtest_chart('SPX')}</div>
+
+<div class="callout warn">
+  <b>結果跟直覺可能相反：兩套訊號策略都遠遠輸給乾脆買進持有。</b>
+  NQ買進持有15.5年累積 {r['backtest']['NQ']['metrics']['buy_hold']['total_return']:+.0f}%
+  （年化{r['backtest']['NQ']['metrics']['buy_hold']['cagr']:+.1f}%、Sharpe
+  {r['backtest']['NQ']['metrics']['buy_hold']['sharpe']:.2f}）；「恐懼多單／貪婪空手」只累積
+  {r['backtest']['NQ']['metrics']['long_only_tilt']['total_return']:+.0f}%
+  （年化{r['backtest']['NQ']['metrics']['long_only_tilt']['cagr']:+.1f}%）；「恐懼多單／貪婪放空」
+  幾乎打平，累積只有{r['backtest']['NQ']['metrics']['long_short']['total_return']:+.1f}%
+  （年化{r['backtest']['NQ']['metrics']['long_short']['cagr']:+.2f}%，15年幾乎沒賺錢）。SP500也是同樣的型態。
+  <br><br>
+  原因直接跟第一節「地心引力」的發現連在一起：這15.5年是罕見的長多頭，「恐懼多單／貪婪空手」策略平均
+  只有約19%的時間持有多單（其餘時間空手在等分數變低），錯過了大部分的漲幅；「恐懼多單／貪婪放空」
+  更慘，貪婪時的空單持續在跟這段長期上漲的趨勢對作，把買進持有原本該賺到的報酬幾乎全部吃掉。
+  「恐懼多單／貪婪空手」的最大回撤（NQ {r['backtest']['NQ']['metrics']['long_only_tilt']['max_dd']:.1f}%）
+  確實比買進持有（{r['backtest']['NQ']['metrics']['buy_hold']['max_dd']:.1f}%）小很多，波動也低很多，
+  如果目標是「降低回撤、犧牲一部分報酬換穩定」，這個策略在風險控制上是有作用的；但如果目標是
+  「打敗大盤」，即使風險調整後看Sharpe值，買進持有（{r['backtest']['NQ']['metrics']['buy_hold']['sharpe']:.2f}）
+  仍然明顯贏過恐懼多單／貪婪空手（{r['backtest']['NQ']['metrics']['long_only_tilt']['sharpe']:.2f}）。
+  <br><br>
+  這跟上一節「不宜放空」的結論方向一致，但這裡的回測把它量化得更清楚：不只是「放空會少賺一點」，
+  而是<b>放空在這段長多頭裡幾乎抵銷了訊號原本該有的優勢，讓15年的報酬幾乎歸零</b>。
+  這個結果高度依賴這15.5年剛好是大多頭的樣本背景，如果换成一段長期盤整或空頭主導的期間，
+  三套策略的相對表現可能完全不同——這是用歷史回測評估任何時機策略時都有的限制，不是這個指數獨有的問題。
+</div>
+
+<h2>三、兩段子時期對照</h2>
 <div class="callout">
   子時期切點定在 <b>2020-07-15</b>，這是CNN官方API實測得到的資料下限（不是原先假設的2021-02-01；
   API對早於2020-07-14的start_date一律回傳500錯誤，2020-07-15是後端資料庫本身的下限，不是「近一年」
@@ -282,7 +410,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   差異本身就可能只是統計雜訊。
 </div>
 
-<h2>三、資料來源與可信度</h2>
+<h2>四、資料來源與可信度</h2>
 <div class="card">
   <h3>CNN指數（股市版）</h3>
   <div class="table-wrap"><table>
@@ -321,7 +449,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   序列跟SP500的「現貨指數」在資料性質上不是完全對等的比較基礎——解讀時建議把這一點也算進去。</p>
 </div>
 
-<h2>四、NQ 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
+<h2>五、NQ 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
 <div class="callout">
   CNN恐懼貪婪指數的七項分項成分（動能、強度、廣度、避險需求、垃圾債需求、選擇權Put/Call、波動度VIX）
   裡，動能、強度、廣度這幾項本身就是直接拿標普500或紐約證交所相關資料算出來的。這代表：
@@ -344,7 +472,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   </table></div>
 </div>
 
-<h2>五、方法論</h2>
+<h2>六、方法論</h2>
 <div class="card">
   <ul>
     <li><b>IC分析：</b>CNN指數分數 vs 未來20個交易日報酬，Spearman等級相關係數，一律用「不重疊取樣」
@@ -360,10 +488,22 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
     <li><b>子時期切點：</b>2020-07-15，對齊CNN官方API實測資料下限（見上方「資料來源與可信度」）。</li>
     <li><b>樣本數標示：</b>分桶圖表裡每一根柱子都標n值；n&lt;10的分組會用橘色標示、代表可信度較低
     （本次分桶因為改用逐日重疊資料，實際上每組樣本數都遠高於10，橘色警示在這次的圖表裡應該不會出現）。</li>
+    <li><b>無條件基準線／超額報酬：</b>不管CNN分數是多少，同一段期間「隨便挑一天」往後看N日的
+    平均報酬，拿來當分桶圖的地心引力基準；每組平均報酬減掉這條基準，就是超額報酬版本，0代表
+    「跟隨便選一天沒兩樣」。</li>
+    <li><b>中間段IC：</b>用跟主IC分析完全相同的不重疊取樣，取完樣之後才把第1組（最恐懼）、
+    最後一組（最貪婪）的樣本點剔除，避免在篩選後才取樣、重新引入報酬窗口重疊的問題。</li>
+    <li><b>策略回測：</b>用第t日收盤的CNN分數，決定第t+1日的持倉比例（<code>shift(1)</code>，
+    不偷看未來），逐日計算報酬並複利累積；三套持倉公式分別是買進持有（恆為100%多單）、
+    恐懼多單／貪婪空手（<code>clip((50-分數)/50, 0, 1)</code>）、恐懼多單／貪婪放空
+    （<code>clip((50-分數)/50, -1, 1)</code>，跟美債專案<code>position_size()</code>公式相同）。
+    績效指標（CAGR、年化波動、Sharpe、Sortino、最大回撤）皆為自行用日報酬序列計算，
+    無風險利率簡化為0；只跑全樣本（2011-01~2026-07），沒有拆兩段子時期，因為策略回測本來就需要
+    夠長的期間才有意義，拆開後樣本太短、複利效果會被扭曲，參考價值有限。</li>
   </ul>
 </div>
 
-<h2>六、結論</h2>
+<h2>七、結論</h2>
 <div class="card">
   <p>
     全樣本下，CNN恐懼貪婪指數（股市版）對NQ與SP500未來20個交易日報酬的IC分別為
@@ -385,6 +525,30 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
     獨立於指數本身的「乾淨」驗證；NQ那組因為完全不是指數的計算輸入，是這次驗證裡比較有參考價值的
     跨市場類推證據。整體而言，這個指數看起來更接近「同期市場情緒的溫度計」，而不是一個能提前20個
     交易日、有統計顯著把握去predict報酬方向的獨立訊號。
+  </p>
+  <p>
+    <b>訊號的方向性幾乎完全集中在頭尾兩個極端。</b>把最恐懼、最貪婪兩組拿掉，中間段的IC
+    （NQ {full['middle_ic']['NQ']['rho']:+.3f}、SP500 {full['middle_ic']['SPX']['rho']:+.3f}）
+    比全樣本IC更弱，官方API期間的中間段IC甚至接近0。意思是：CNN分數從中性偏恐懼走到中性偏貪婪這段
+    （分數大約落在15~80分之間），對未來20日報酬幾乎沒有穩定、可靠的區辨力；真正有訊息量的只有
+    最恐懼那一小段（最貪婪那段則因為動能延續效應、不像單純的反向訊號）。
+  </p>
+  <p>
+    <b>把訊號變成策略之後，長期報酬遠遠落後買進持有。</b>全樣本回測顯示，「恐懼多單／貪婪空手」
+    策略15.5年只累積{r['backtest']['NQ']['metrics']['long_only_tilt']['total_return']:+.0f}%（NQ），
+    「恐懼多單／貪婪放空」更只有{r['backtest']['NQ']['metrics']['long_short']['total_return']:+.1f}%，
+    兩者都遠遠不敵買進持有的{r['backtest']['NQ']['metrics']['buy_hold']['total_return']:+.0f}%——
+    根本原因就是第一節講的「地心引力」：這15.5年是罕見長多頭，任何讓你長時間空手或做空的策略，
+    都會持續錯過這段漲幅。這印證了「貪婪時不宜放空」的直覺，但也進一步顯示：<b>就連「貪婪時只是
+    空手觀望、不做多不做空」，付出的機會成本可能已經比想像中大得多。</b>如果只看風險（最大回撤、
+    波動度），恐懼多單／貪婪空手確實比買進持有溫和很多，這是它唯一站得住腳的優勢，但這是用犧牲
+    大部分長期報酬換來的，不是「風險降低、報酬照樣好」的免費午餐。
+  </p>
+  <p>
+    整體結論：這個指數的「恐懼」端有一致、值得留意的逆向訊號，「貪婪」端不宜當成放空理由（甚至
+    不宜當成大幅減碼的理由），中間九成的分數區間本身規律性很弱，比較適合當成極端值的警示器，而不是
+    拿來對整條0~100分做連續、線性的持倉調整訊號。以上所有結論都建立在2011~2026這段特定的歷史樣本
+    （尤其是長期大多頭的背景）之上，換一段市場風格不同的樣本，結果可能不同。
   </p>
 </div>
 
