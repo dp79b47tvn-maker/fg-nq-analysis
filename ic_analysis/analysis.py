@@ -1,5 +1,5 @@
 """
-CNN 恐懼貪婪指數(股市版) 對 NQ=F / SP500 的因子驗證分析
+CNN 恐懼貪婪指數(股市版) 對 ^NDX / SP500 的因子驗證分析
 
 方法論沿用 bond_data_pipeline/factor_validation_analysis.py 的做法：
   1. IC分析：CNN指數分數 vs 未來20個交易日報酬，Spearman等級相關係數，
@@ -57,7 +57,7 @@ N_BUCKETS = 20
 LOW_N_WARN = 10
 OFFICIAL_FLOOR = pd.Timestamp("2021-02-01")  # 見fetch_fg.py：修正後的官方API資料真正可信下限
 
-TARGETS = {"NQ": "NQ=F (那斯達克100期貨)", "SPX": "^GSPC (標普500指數)"}
+TARGETS = {"NDX": "^NDX (那斯達克100指數)", "SPX": "^GSPC (標普500指數)"}
 
 
 def load_data():
@@ -231,12 +231,12 @@ def horizon_scan(df, target_col, horizons=HORIZON_SCAN_SET, buckets=N_BUCKETS):
     return rows
 
 
-def horizon_scan_chart_base64(scan_nq, scan_spx, title):
+def horizon_scan_chart_base64(scan_ndx, scan_spx, title):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9.5, 5.6), dpi=140, sharex=True,
                                      gridspec_kw={"hspace": 0.12})
-    horizons = [r["horizon"] for r in scan_nq]
+    horizons = [r["horizon"] for r in scan_ndx]
 
-    for scan, color, label in [(scan_nq, "#23262B", "NQ=F"), (scan_spx, "#8A8577", "^GSPC")]:
+    for scan, color, label in [(scan_ndx, "#23262B", "^NDX"), (scan_spx, "#8A8577", "^GSPC")]:
         rhos = [r["ic"]["rho"] if r["ic"] and r["ic"]["rho"] is not None else float("nan") for r in scan]
         sig = [r["ic"] is not None and r["ic"]["pval"] is not None and r["ic"]["pval"] < 0.05 for r in scan]
         ax1.plot(horizons, rhos, color=color, linewidth=1.3, marker="o", markersize=4, label=label)
@@ -251,10 +251,10 @@ def horizon_scan_chart_base64(scan_nq, scan_spx, title):
     for spine in ["top", "right"]:
         ax1.spines[spine].set_visible(False)
 
-    for scan, ls, label in [(scan_nq, "-", "NQ=F 第1組(最恐懼)超額報酬"), (scan_spx, "--", "^GSPC 第1組(最恐懼)超額報酬")]:
+    for scan, ls, label in [(scan_ndx, "-", "^NDX 第1組(最恐懼)超額報酬"), (scan_spx, "--", "^GSPC 第1組(最恐懼)超額報酬")]:
         vals = [r["fear_excess"] if r["fear_excess"] is not None else float("nan") for r in scan]
         ax2.plot(horizons, vals, color=FEAR_HEX, linewidth=1.3, linestyle=ls, marker="o", markersize=4, label=label)
-    for scan, ls, label in [(scan_nq, "-", "NQ=F 最後一組(最貪婪)超額報酬"), (scan_spx, "--", "^GSPC 最後一組(最貪婪)超額報酬")]:
+    for scan, ls, label in [(scan_ndx, "-", "^NDX 最後一組(最貪婪)超額報酬"), (scan_spx, "--", "^GSPC 最後一組(最貪婪)超額報酬")]:
         vals = [r["greed_excess"] if r["greed_excess"] is not None else float("nan") for r in scan]
         ax2.plot(horizons, vals, color=GREED_HEX, linewidth=1.3, linestyle=ls, marker="o", markersize=4, label=label)
     ax2.axhline(0, color="#9a9488", linewidth=0.8)
@@ -412,13 +412,110 @@ def excess_bucket_chart_base64(bucket_result, title):
     return fig_to_base64(fig)
 
 
+# ---------------------------------------------------------------- 2b. 第20分位往下拆細
+def top_bucket_drilldown(df, target_col, horizon=HORIZON, buckets=N_BUCKETS, sub_groups=5):
+    """把第20分位(最貪婪那~5%)單獨抓出來，往下拆細看內部有沒有趨勢。同時做兩種切法：
+      (a) fixed：在最貪婪組的分數範圍內切成 sub_groups 個等寬分數區間(例如78-82,82-86...)，
+          可讀性高、可以直接講『分數90以上 vs 78-82』，但每組樣本數不均。
+      (b) qcut：把最貪婪組的樣本再平均切成 sub_groups 等分，每組樣本數均勻、統計上較穩，
+          但每組的分數範圍標籤不漂亮。
+    兩種都看未來horizon日的『超額報酬』(減去全樣本無條件平均，跟其它超額報酬圖一致)。
+    分桶跟主分桶圖一樣用逐日重疊資料。"""
+    sub = df[["score"]].copy()
+    sub["fwd"] = forward_return(df[target_col], horizon)
+    sub = sub.dropna()
+    if len(sub) < buckets * 3:
+        return None
+    try:
+        sub["bucket"] = pd.qcut(sub["score"], buckets, labels=False, duplicates="drop")
+    except ValueError:
+        return None
+    top = sub[sub["bucket"] == sub["bucket"].max()].copy()
+    if len(top) < sub_groups * 3:
+        return None
+    uncond = unconditional_stats(df, target_col, horizon)
+    base = uncond["mean"] if uncond else 0.0
+
+    lo, hi = float(top["score"].min()), float(top["score"].max())
+    edges = [lo + (hi - lo) * i / sub_groups for i in range(sub_groups + 1)]
+    edges[-1] = hi + 1e-6
+    top["fixed"] = pd.cut(top["score"], bins=edges, labels=False, include_lowest=True)
+    fixed_rows = []
+    for g in range(sub_groups):
+        grp = top[top["fixed"] == g]
+        if len(grp) == 0:
+            fixed_rows.append({"label": f"{edges[g]:.0f}-{edges[g+1]:.0f}", "excess": None,
+                               "mean_fwd": None, "n": 0})
+        else:
+            fixed_rows.append({
+                "label": f"{grp['score'].min():.0f}-{grp['score'].max():.0f}",
+                "excess": float(grp["fwd"].mean() - base),
+                "mean_fwd": float(grp["fwd"].mean()), "n": int(len(grp)),
+            })
+
+    try:
+        top["q"] = pd.qcut(top["score"], sub_groups, labels=False, duplicates="drop")
+    except ValueError:
+        top["q"] = 0
+    qcut_rows = []
+    for g in sorted(top["q"].unique()):
+        grp = top[top["q"] == g]
+        qcut_rows.append({
+            "label": f"{grp['score'].min():.1f}-{grp['score'].max():.1f}",
+            "excess": float(grp["fwd"].mean() - base),
+            "mean_fwd": float(grp["fwd"].mean()), "n": int(len(grp)),
+        })
+    return {"fixed": fixed_rows, "qcut": qcut_rows, "base": float(base),
+            "top_score_range": [lo, hi], "top_n": int(len(top))}
+
+
+def top_bucket_drilldown_chart_base64(dd_map, title):
+    """2×2 網格：列＝標的(NDX/SPX)，欄＝切法(固定等寬 / 等數量)。樣本數<10的子組用警示色標。"""
+    targets = [t for t in dd_map if dd_map[t] is not None]
+    if not targets:
+        return None
+    fig, axes = plt.subplots(len(targets), 2, figsize=(9.5, 3.0 * len(targets)), dpi=140)
+    if len(targets) == 1:
+        axes = axes.reshape(1, -1)
+    method_names = [("fixed", "固定等寬分數區間"), ("qcut", "等數量分位(qcut)")]
+    for row, t in enumerate(targets):
+        dd = dd_map[t]
+        short = TARGETS[t].split(" ")[0]
+        for col, (key, cname) in enumerate(method_names):
+            ax = axes[row][col]
+            rows = dd[key]
+            labels = [r["label"] for r in rows]
+            vals = [r["excess"] if r["excess"] is not None else 0.0 for r in rows]
+            ns = [r["n"] for r in rows]
+            colors = [GREED_HEX if n >= LOW_N_WARN else WARN_HEX for n in ns]
+            ax.bar(range(len(rows)), vals, color=colors, width=0.7)
+            ax.axhline(0, color="#3a3a36", linewidth=1.0)
+            vmax = max(vals + [0]); vmin = min(vals + [0])
+            pad = (vmax - vmin) * 0.28 or 0.5
+            ax.set_ylim(vmin - pad, vmax + pad)
+            ax.set_xticks(range(len(rows)))
+            ax.set_xticklabels(labels, fontsize=6, rotation=30, ha="right")
+            ax.set_title(f"{short}｜{cname}", fontsize=8.5, pad=8)
+            if col == 0:
+                ax.set_ylabel("超額報酬 (%)", fontsize=8)
+            ax.tick_params(axis="y", labelsize=7.5)
+            for spine in ["top", "right"]:
+                ax.spines[spine].set_visible(False)
+            for i, (v, n) in enumerate(zip(vals, ns)):
+                ax.annotate(f"{v:+.2f}\nn={n}", (i, v), textcoords="offset points",
+                            xytext=(0, 3 if v >= 0 else -15), ha="center", fontsize=5.8, linespacing=1.2)
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig_to_base64(fig)
+
+
 def price_trend_chart_base64(df, periods):
-    """NQ=F、SP500 全樣本價格走勢（指數化為期初=100，對數座標），用來直接說明分桶圖
+    """^NDX、SP500 全樣本價格走勢（指數化為期初=100，對數座標），用來直接說明分桶圖
     疊在多大的『大盤長期上漲』基準之上——不是抽象的一句話，讀者可以直接看到那條曲線。"""
     fig, ax = plt.subplots(figsize=(9.5, 3.6), dpi=140)
-    nq_idx = df["NQ"] / df["NQ"].iloc[0] * 100
+    ndx_idx = df["NDX"] / df["NDX"].iloc[0] * 100
     spx_idx = df["SPX"] / df["SPX"].iloc[0] * 100
-    ax.plot(df.index, nq_idx, color="#23262B", linewidth=1.3, label="NQ=F（那斯達克100期貨）")
+    ax.plot(df.index, ndx_idx, color="#23262B", linewidth=1.3, label="^NDX（那斯達克100指數）")
     ax.plot(df.index, spx_idx, color="#8A8577", linewidth=1.1,
             linestyle="--", label="^GSPC（標普500指數）")
     ax.set_yscale("log")
@@ -430,16 +527,16 @@ def price_trend_chart_base64(df, periods):
             ax.annotate("官方API期間起點\n2021-02-01", (boundary, ax.get_ylim()[1]),
                         fontsize=7, color="#6C7268", ha="left", va="top",
                         xytext=(4, -4), textcoords="offset points")
-    nq_valid, spx_valid = nq_idx.dropna(), spx_idx.dropna()
-    nq_total = nq_valid.iloc[-1] - 100
+    ndx_valid, spx_valid = ndx_idx.dropna(), spx_idx.dropna()
+    ndx_total = ndx_valid.iloc[-1] - 100
     spx_total = spx_valid.iloc[-1] - 100
-    nq_years = (nq_valid.index[-1] - nq_valid.index[0]).days / 365.25
+    ndx_years = (ndx_valid.index[-1] - ndx_valid.index[0]).days / 365.25
     spx_years = (spx_valid.index[-1] - spx_valid.index[0]).days / 365.25
-    nq_cagr = ((nq_valid.iloc[-1] / 100) ** (1 / nq_years) - 1) * 100
+    ndx_cagr = ((ndx_valid.iloc[-1] / 100) ** (1 / ndx_years) - 1) * 100
     spx_cagr = ((spx_valid.iloc[-1] / 100) ** (1 / spx_years) - 1) * 100
-    years = nq_years
+    years = ndx_years
     ax.set_title(
-        f"NQ=F 全期間累積 {nq_total:+.0f}%（年化 {nq_cagr:+.1f}%）　｜　"
+        f"^NDX 全期間累積 {ndx_total:+.0f}%（年化 {ndx_cagr:+.1f}%）　｜　"
         f"SP500 全期間累積 {spx_total:+.0f}%（年化 {spx_cagr:+.1f}%）　（{years:.1f}年）",
         fontsize=9.5,
     )
@@ -457,7 +554,7 @@ EXTREME_GREED_TH = 75
 
 
 def timeline_comparison_chart_base64(df):
-    """上下兩層對齊圖：上層是CNN指數本身的時間軸(標出25/75門檻)，下層是NQ/SP500指數化
+    """上下兩層對齊圖：上層是CNN指數本身的時間軸(標出25/75門檻)，下層是^NDX/SP500指數化
     價格走勢，並在股價線上用綠點標出CNN指數<25(最恐懼)、紅點標出>75(最貪婪)的那些日子，
     方便直接用肉眼比對『極端讀數出現時，股價實際在做什麼』。"""
     fig, (ax1, ax2) = plt.subplots(
@@ -485,9 +582,9 @@ def timeline_comparison_chart_base64(df):
     for spine in ["top", "right"]:
         ax1.spines[spine].set_visible(False)
 
-    nq_idx = df["NQ"] / df["NQ"].iloc[0] * 100
+    ndx_idx = df["NDX"] / df["NDX"].iloc[0] * 100
     spx_idx = df["SPX"] / df["SPX"].iloc[0] * 100
-    ax2.plot(df.index, nq_idx, color="#23262B", linewidth=1.0, label="NQ=F（那斯達克100期貨）")
+    ax2.plot(df.index, ndx_idx, color="#23262B", linewidth=1.0, label="^NDX（那斯達克100指數）")
     ax2.plot(df.index, spx_idx, color="#8A8577", linewidth=0.9, linestyle="--",
               label="^GSPC（標普500指數）")
     ax2.set_yscale("log")
@@ -495,10 +592,10 @@ def timeline_comparison_chart_base64(df):
     fear_mask = df["score"] < EXTREME_FEAR_TH
     greed_mask = df["score"] > EXTREME_GREED_TH
     n_fear, n_greed = int(fear_mask.sum()), int(greed_mask.sum())
-    ax2.scatter(df.index[fear_mask], nq_idx[fear_mask], color="#2E7D4F", s=9, zorder=5,
+    ax2.scatter(df.index[fear_mask], ndx_idx[fear_mask], color="#2E7D4F", s=9, zorder=5,
                 label=f"分數<{EXTREME_FEAR_TH}最恐懼（{n_fear}天）")
     ax2.scatter(df.index[fear_mask], spx_idx[fear_mask], color="#2E7D4F", s=7, zorder=5)
-    ax2.scatter(df.index[greed_mask], nq_idx[greed_mask], color="#B23B3B", s=9, zorder=5,
+    ax2.scatter(df.index[greed_mask], ndx_idx[greed_mask], color="#B23B3B", s=9, zorder=5,
                 label=f"分數>{EXTREME_GREED_TH}最貪婪（{n_greed}天）")
     ax2.scatter(df.index[greed_mask], spx_idx[greed_mask], color="#B23B3B", s=7, zorder=5)
     ax2.set_ylabel("指數化價格（期初=100，對數座標）", fontsize=9)
@@ -563,16 +660,24 @@ def run_all():
 
     results["price_trend_chart_base64"] = price_trend_chart_base64(df, results["periods"])
 
+    # ---------------------------------------------------- 第20分位往下拆細（全樣本）
+    dd_map = {t: top_bucket_drilldown(df, t) for t in TARGETS}
+    results["top_bucket_drilldown"] = {
+        "data": dd_map,
+        "chart_base64": top_bucket_drilldown_chart_base64(
+            dd_map, "第20分位（最貪婪~5%）往下拆細：未來20日超額報酬"),
+    }
+
     timeline_chart, timeline_stats = timeline_comparison_chart_base64(df)
     results["timeline_chart_base64"] = timeline_chart
     results["timeline_stats"] = timeline_stats
 
     # ---------------------------------------------------- 不同持有期的訊號強度掃描（全樣本）
-    scan_nq = horizon_scan(df, "NQ")
+    scan_ndx = horizon_scan(df, "NDX")
     scan_spx = horizon_scan(df, "SPX")
     results["horizon_scan"] = {
-        "NQ": scan_nq, "SPX": scan_spx,
-        "chart_base64": horizon_scan_chart_base64(scan_nq, scan_spx, "不同持有期的IC與極端分組超額報酬（全樣本）"),
+        "NDX": scan_ndx, "SPX": scan_spx,
+        "chart_base64": horizon_scan_chart_base64(scan_ndx, scan_spx, "不同持有期的IC與極端分組超額報酬（全樣本）"),
     }
 
     # ---------------------------------------------------- 策略回測（全樣本，daily rebalance）

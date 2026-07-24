@@ -1,4 +1,10 @@
-"""抓取 NQ=F(那斯達克100期貨) 與 ^GSPC(標普500指數) 歷史日線，對齊到CNN指數可取得的最早日期。"""
+"""抓取 ^NDX(那斯達克100指數) 與 ^GSPC(標普500指數) 歷史日線，對齊到CNN指數可取得的最早日期。
+
+2026-07-23：NQ 這一側從原本的 NQ=F(那斯達克100期貨) 改成 ^NDX(那斯達克100現貨指數)。
+原因：兩邊都用現貨指數之後，「NQ vs SP500」這組對照就沒有「一個期貨、一個現貨」的資料性質
+不對稱問題（期貨的轉倉／展期價差雜訊），是更乾淨的比較。欄位識別碼也一併從 NQ 正名為 NDX，
+不留「欄位叫NQ、裝的卻是^NDX」這種會誤導人的地雷。
+"""
 from pathlib import Path
 
 import pandas as pd
@@ -18,12 +24,12 @@ def fetch(ticker, name):
 
 
 def main():
-    nq = fetch("NQ=F", "NQ")
+    ndx = fetch("^NDX", "NDX")
     spx = fetch("^GSPC", "SPX")
-    print("NQ=F:", nq.index.min().date(), "~", nq.index.max().date(), f"({len(nq)}筆)")
+    print("^NDX:", ndx.index.min().date(), "~", ndx.index.max().date(), f"({len(ndx)}筆)")
     print("^GSPC:", spx.index.min().date(), "~", spx.index.max().date(), f"({len(spx)}筆)")
 
-    combined = pd.concat([nq, spx], axis=1, sort=True)
+    combined = pd.concat([ndx, spx], axis=1, sort=True)
     combined.index.name = "Date"
     combined.to_csv(DATA_DIR / "prices.csv")
     return combined

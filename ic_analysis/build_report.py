@@ -1,4 +1,4 @@
-"""組出獨立的HTML因子驗證報告：CNN恐懼貪婪指數(股市版) vs NQ=F / SP500。"""
+"""組出獨立的HTML因子驗證報告：CNN恐懼貪婪指數(股市版) vs ^NDX / SP500。"""
 import json
 from pathlib import Path
 
@@ -9,7 +9,7 @@ PERIOD_LABELS = {
     "period1_reconstructed": "第三方重建期間",
     "period2_official": "官方API期間",
 }
-TARGET_LABELS = {"NQ": "NQ=F（那斯達克100期貨）", "SPX": "^GSPC（標普500指數）"}
+TARGET_LABELS = {"NDX": "^NDX（那斯達克100指數）", "SPX": "^GSPC（標普500指數）"}
 
 
 def fmt_rho(cell):
@@ -44,9 +44,9 @@ def build():
         ic_rows += f"""
         <tr>
           <td>{PERIOD_LABELS[pname]}<br><span class='sub'>{pd_['date_range'][0]} ~ {pd_['date_range'][1]}</span></td>
-          <td>{fmt_rho(pd_['ic']['NQ'])}</td>
+          <td>{fmt_rho(pd_['ic']['NDX'])}</td>
           <td>{fmt_rho(pd_['ic']['SPX'])}</td>
-          <td>{fmt_mono(pd_['bucket']['NQ'])}</td>
+          <td>{fmt_mono(pd_['bucket']['NDX'])}</td>
           <td>{fmt_mono(pd_['bucket']['SPX'])}</td>
         </tr>"""
 
@@ -58,13 +58,13 @@ def build():
 
     full_charts = f"""
       <div class="chart-pair">
-        <div>{chart_img('full', 'NQ')}</div>
+        <div>{chart_img('full', 'NDX')}</div>
         <div>{chart_img('full', 'SPX')}</div>
       </div>"""
 
     full_excess_charts = f"""
       <div class="chart-pair">
-        <div>{chart_img('full', 'NQ', 'excess_chart_base64')}</div>
+        <div>{chart_img('full', 'NDX', 'excess_chart_base64')}</div>
         <div>{chart_img('full', 'SPX', 'excess_chart_base64')}</div>
       </div>"""
 
@@ -74,23 +74,31 @@ def build():
         if r.get("price_trend_chart_base64") else "<p class='dim'>（無法產生走勢圖）</p>"
     )
 
-    uncond_nq = full["bucket"]["NQ"]["unconditional"]
+    dd = r.get("top_bucket_drilldown", {})
+    drilldown_img = (
+        f"<img src='data:image/png;base64,{dd['chart_base64']}' style='width:100%;max-width:860px;'/>"
+        if dd.get("chart_base64") else "<p class='dim'>（無法產生拆細圖）</p>"
+    )
+    dd_ndx = (dd.get("data") or {}).get("NDX") or {}
+    dd_spx = (dd.get("data") or {}).get("SPX") or {}
+
+    uncond_nq = full["bucket"]["NDX"]["unconditional"]
     uncond_spx = full["bucket"]["SPX"]["unconditional"]
 
     period_compare_charts = ""
     for pname in ["period1_reconstructed", "period2_official"]:
-        u_nq = periods[pname]["bucket"]["NQ"]["unconditional"]
+        u_nq = periods[pname]["bucket"]["NDX"]["unconditional"]
         u_spx = periods[pname]["bucket"]["SPX"]["unconditional"]
         period_compare_charts += f"""
       <h4>{PERIOD_LABELS[pname]}（{periods[pname]['date_range'][0]} ~ {periods[pname]['date_range'][1]}，n={periods[pname]['n_rows']}筆；
-      同期無條件平均20日報酬：NQ {u_nq['mean']:+.2f}%、SP500 {u_spx['mean']:+.2f}%）</h4>
+      同期無條件平均20日報酬：^NDX {u_nq['mean']:+.2f}%、SP500 {u_spx['mean']:+.2f}%）</h4>
       <div class="chart-pair">
-        <div>{chart_img(pname, 'NQ')}</div>
+        <div>{chart_img(pname, 'NDX')}</div>
         <div>{chart_img(pname, 'SPX')}</div>
       </div>
       <p class="sub">超額報酬版（扣掉上面這條同期基準線）：</p>
       <div class="chart-pair">
-        <div>{chart_img(pname, 'NQ', 'excess_chart_base64')}</div>
+        <div>{chart_img(pname, 'NDX', 'excess_chart_base64')}</div>
         <div>{chart_img(pname, 'SPX', 'excess_chart_base64')}</div>
       </div>"""
 
@@ -100,7 +108,7 @@ def build():
             return None
         return cell["rho"] < 0
 
-    nq_signs = [sign(periods[p]["ic"]["NQ"]) for p in ["period1_reconstructed", "period2_official"]]
+    nq_signs = [sign(periods[p]["ic"]["NDX"]) for p in ["period1_reconstructed", "period2_official"]]
     spx_signs = [sign(periods[p]["ic"]["SPX"]) for p in ["period1_reconstructed", "period2_official"]]
     nq_consistent = len(set(nq_signs)) == 1 and None not in nq_signs
     spx_consistent = len(set(spx_signs)) == 1 and None not in spx_signs
@@ -112,18 +120,18 @@ def build():
     middle_rows = ""
     for pname in ["full", "period1_reconstructed", "period2_official"]:
         m = periods[pname]["middle_ic"]
-        rng = m["NQ"].get("score_range") if m.get("NQ") else None
+        rng = m["NDX"].get("score_range") if m.get("NDX") else None
         rng_txt = f"{rng[0]:.0f}~{rng[1]:.0f}分" if rng else "—"
         middle_rows += f"""
         <tr>
           <td>{PERIOD_LABELS[pname]}<br><span class='sub'>分數範圍 {rng_txt}</span></td>
-          <td>{fmt_rho(m['NQ'])}</td>
+          <td>{fmt_rho(m['NDX'])}</td>
           <td>{fmt_rho(m['SPX'])}</td>
         </tr>"""
 
     middle_charts_full = f"""
       <div class="chart-pair">
-        <div>{chart_img('full', 'NQ', 'middle_chart_base64')}</div>
+        <div>{chart_img('full', 'NDX', 'middle_chart_base64')}</div>
         <div>{chart_img('full', 'SPX', 'middle_chart_base64')}</div>
       </div>"""
 
@@ -201,7 +209,7 @@ def build():
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8"/>
-<title>CNN恐懼貪婪指數(股市版) 對 NQ / SP500 預測力驗證報告</title>
+<title>CNN恐懼貪婪指數(股市版) 對 ^NDX / SP500 預測力驗證報告</title>
 <style>
   :root {{
     --paper: #EEF0EA;
@@ -283,7 +291,7 @@ def build():
 </head>
 <body>
 
-<h1>CNN恐懼貪婪指數（股市版）對 NQ 與 SP500 未來報酬的預測力驗證</h1>
+<h1>CNN恐懼貪婪指數（股市版）對 ^NDX 與 SP500 未來報酬的預測力驗證</h1>
 <p class="lede">
   獨立分析專案，與美債恐懼貪婪儀表板專案（<code>bond_data_pipeline</code>）分開存放於
   <code>fg_nq_analysis/ic_analysis/</code>。方法論沿用美債專案「因子驗證分析報告」的IC與分位數分桶架構，
@@ -295,9 +303,9 @@ def build():
   <span class="gauge-label">100 極度貪婪</span>
 </div>
 
-<h3>指數時間軸總覽：CNN分數 vs NQ／SP500走勢</h3>
+<h3>指數時間軸總覽：CNN分數 vs ^NDX／SP500走勢</h3>
 <p>上層是CNN指數本身逐日的分數（淺色＝第三方重建、深色＝官方API），標出25分（最恐懼門檻）、
-75分（最貪婪門檻）；下層是NQ=F、SP500指數化後的價格走勢，在對應日期用<span class="fear-tilt"
+75分（最貪婪門檻）；下層是^NDX、SP500指數化後的價格走勢，在對應日期用<span class="fear-tilt"
 style="color:#2E7D4F">綠點標出分數&lt;25</span>、<span class="fear-tilt" style="color:#B23B3B">紅點
 標出分數&gt;75</span>，方便直接用肉眼比對「極端讀數出現時，股價實際在做什麼」——
 全樣本裡分數低於25的有{ts.get('n_fear','—')}天、高於75的有{ts.get('n_greed','—')}天。</p>
@@ -314,13 +322,13 @@ style="color:#2E7D4F">綠點標出分數&lt;25</span>、<span class="fear-tilt" 
 <h2>一、摘要：全樣本結果</h2>
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th>樣本</th><th>IC vs NQ=F（20日、不重疊取樣）</th><th>IC vs SP500（20日、不重疊取樣）</th>
-        <th>分桶單調性 vs NQ</th><th>分桶單調性 vs SP500</th></tr>
+    <tr><th>樣本</th><th>IC vs ^NDX（20日、不重疊取樣）</th><th>IC vs SP500（20日、不重疊取樣）</th>
+        <th>分桶單調性 vs ^NDX</th><th>分桶單調性 vs SP500</th></tr>
     <tr>
       <td>{PERIOD_LABELS['full']}<br><span class='sub'>{full['date_range'][0]} ~ {full['date_range'][1]}，{full['n_rows']}筆</span></td>
-      <td>{fmt_rho(full['ic']['NQ'])}</td>
+      <td>{fmt_rho(full['ic']['NDX'])}</td>
       <td>{fmt_rho(full['ic']['SPX'])}</td>
-      <td>{fmt_mono(full['bucket']['NQ'])}</td>
+      <td>{fmt_mono(full['bucket']['NDX'])}</td>
       <td>{fmt_mono(full['bucket']['SPX'])}</td>
     </tr>
   </table></div>
@@ -333,20 +341,20 @@ style="color:#2E7D4F">綠點標出分數&lt;25</span>、<span class="fear-tilt" 
 
 <h3>為什麼最右邊（最貪婪）那組沒有變成負的？</h3>
 <div class="callout">
-  直覺上「貪婪時未來報酬應該轉差」，甚至轉負——但上面的圖裡，就連第20組（最貪婪）NQ與SP500的
+  直覺上「貪婪時未來報酬應該轉差」，甚至轉負——但上面的圖裡，就連第20組（最貪婪）^NDX與SP500的
   未來20日平均報酬<b>仍然是正的</b>。原因是整條分桶曲線<b>疊在「大盤長期上漲」這個基準之上</b>，
   不是以0為中心畫出來的。
 </div>
 <p>把CNN指數分數完全丟開，這15.5年裡「隨便挑一天」往後看20個交易日，平均報酬長這樣：</p>
 <div class="table-wrap"><table>
   <tr><th></th><th>無條件平均20日報酬</th><th>中位數</th><th>報酬為負的比例</th></tr>
-  <tr><td>NQ=F</td><td class="greed-tilt">{uncond_nq['mean']:+.2f}%</td><td>{uncond_nq['median']:+.2f}%</td><td>{uncond_nq['pct_negative']:.1f}%</td></tr>
+  <tr><td>^NDX</td><td class="greed-tilt">{uncond_nq['mean']:+.2f}%</td><td>{uncond_nq['median']:+.2f}%</td><td>{uncond_nq['pct_negative']:.1f}%</td></tr>
   <tr><td>SP500</td><td class="greed-tilt">{uncond_spx['mean']:+.2f}%</td><td>{uncond_spx['median']:+.2f}%</td><td>{uncond_spx['pct_negative']:.1f}%</td></tr>
 </table></div>
-<p>這是2011~2026這段罕見長多頭的結果——下面是同一段期間NQ=F、SP500的實際走勢（對數座標）：</p>
+<p>這是2011~2026這段罕見長多頭的結果——下面是同一段期間^NDX、SP500的實際走勢（對數座標）：</p>
 <div style="text-align:center;">{price_trend_img}</div>
-<p class="sub">NQ=F這15.5年累積漲了約1193%（年化約17.9%），SP500累積約490%（年化約12.1%）。
-在這種背景下，隨便挑一個交易日往後看20天，平均本來就已經是正的（NQ約+1.47%、SP500約+1.01%），
+<p class="sub">^NDX這15.5年累積漲了約1186%（年化約18.0%），SP500累積約490%（年化約12.2%）。
+在這種背景下，隨便挑一個交易日往後看20天，平均本來就已經是正的（^NDX約+1.46%、SP500約+1.01%），
 而且六成以上的窗口都是正報酬。分桶柱狀圖每一根都疊在這個「地心引力」水位上，
 IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮」這個<b>相對關係</b>，不是「柱子有沒有跨過0」——
 就算訊號完全成立，貪婪那組理論上也只需要比恐懼那組矮，不一定要跌破0。</p>
@@ -362,28 +370,50 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 而不是「越貪婪就越應該賣出」這種單純的線性關係。這也是上面分桶單調性只有-0.3左右（方向對但不強）
 的原因之一。</p>
 
+<h3>把第20分位（最貪婪那~5%）單獨抓出來往下拆細，內部有沒有趨勢？</h3>
+<p>既然第20組整組反彈成正的違反直覺，就把這一組（分數約 {dd_ndx.get('top_score_range',[0,0])[0]:.0f}~{dd_ndx.get('top_score_range',[0,0])[1]:.0f} 分，
+n={dd_ndx.get('top_n','—')}）單獨拉出來、再往下切細看內部。用兩種切法並列對照：<b>固定等寬分數區間</b>
+（例如81-84、85-87…，可讀性高但每組樣本數不均）跟<b>等數量分位qcut</b>（每組樣本數一樣多、統計上較穩，
+但分數標籤不漂亮）。兩種都看未來20日超額報酬，樣本數少於10的子組用紅色標示（可信度低）：</p>
+<div style="text-align:center;">{drilldown_img}</div>
+<div class="callout">
+  <b>拆細之後看到一個「倒U」形，原本整組的反彈其實藏著內部結構：</b>
+  <ul>
+    <li><b>從「偏貪婪」往「很貪婪」走，超額報酬是先往上爬的</b>（動能延續）：^NDX大約在分數88~91這一段
+    衝到最高（等寬區間88-90組來到+1.99%、qcut最高那組約+1.75%），這段是撐起「第20組整組反彈」的主力。</li>
+    <li><b>但真正最極端的貪婪（分數約92以上）就開始往下掉，不再是最高：</b>^NDX最極端那個qcut子組
+    （{dd_ndx.get('qcut',[{}])[-1].get('label','—')} 分）超額報酬掉到 {dd_ndx.get('qcut',[{}])[-1].get('excess',0):+.2f}%，
+    SP500更明顯、直接翻負（最極端子組 {dd_spx.get('qcut',[{}])[-1].get('excess',0):+.2f}%，固定區間94-97那格也是負的）。</li>
+    <li>換句話說：<b>「第20組整組反彈成正」這件事，主要是分數85~91這種「貪婪但還沒到極端」的區間貢獻的，
+    不是真正最極端那一小撮</b>。真正最極端貪婪（92分以上）其實已經開始出現「退燒」的跡象，方向跟直覺一致，
+    只是這一小撮的樣本非常薄（等寬區間最高那格n只有個位數），統計上很不可靠，不能當成確定的結論。</li>
+  </ul>
+  這也解釋了為什麼前面用20組看的時候，最右邊那根會反彈——因為第20組把「貪婪但不極端」跟「極端貪婪」
+  混在同一組了，一拆細就看得出來這兩者的行為其實不一樣。
+</div>
+
 <h3>把最恐懼、最貪婪兩端各拿掉4組，中間段還有沒有方向性？</h3>
 <p>整條分桶曲線的「方向」，有多少其實是被頭尾兩端的極端讀數撐起來的？這裡不是只拿掉頭尾各1組，
 而是<b>頭尾各拿掉4組（20組裡拿掉8組，只留中間12組，大約對應30~68分這個更嚴格定義的「中性」區間）</b>，
 重新算一次CNN分數跟未來報酬的Spearman相關(取樣方法跟主IC表完全一樣，一樣先做不重疊取樣、再篩掉頭尾)：</p>
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th>樣本</th><th>中間段IC vs NQ=F</th><th>中間段IC vs SP500</th></tr>
+    <tr><th>樣本</th><th>中間段IC vs ^NDX</th><th>中間段IC vs SP500</th></tr>
     {middle_rows}
   </table></div>
-  <p class="sub">對照：拿掉頭尾前的全樣本IC是 NQ {fmt_rho(full['ic']['NQ'])}　SP500 {fmt_rho(full['ic']['SPX'])}（見上方摘要表）。</p>
+  <p class="sub">對照：拿掉頭尾前的全樣本IC是 ^NDX {fmt_rho(full['ic']['NDX'])}　SP500 {fmt_rho(full['ic']['SPX'])}（見上方摘要表）。</p>
 </div>
 <p>把中間12組的超額報酬攤開來看：</p>
 {middle_charts_full}
 <div class="callout warn">
-  <b>這次結果比只拿掉頭尾各1組時更值得注意，而且方向反過來了：</b>全樣本NQ的中間段IC是
-  {full['middle_ic']['NQ']['rho']:+.3f}（p={full['middle_ic']['NQ']['pval']:.3f}），
+  <b>這次結果比只拿掉頭尾各1組時更值得注意，而且方向反過來了：</b>全樣本^NDX的中間段IC是
+  {full['middle_ic']['NDX']['rho']:+.3f}（p={full['middle_ic']['NDX']['pval']:.3f}），
   是<b>正的</b>，而且勉強達到5%顯著門檻——方向跟「恐懼買入」的假設<b>相反</b>（分數越高、
   未來報酬有點越高的傾向）。但這個結果不穩定：SP500同樣的切法只有
   {full['middle_ic']['SPX']['rho']:+.3f}（p={full['middle_ic']['SPX']['pval']:.3f}），
-  沒有顯著；拆開兩段子時期看，第三方重建期間NQ是{p1['middle_ic']['NQ']['rho']:+.3f}
-  （p={p1['middle_ic']['NQ']['pval']:.3f}，不顯著），官方API期間NQ幾乎剛好是0
-  （{p2['middle_ic']['NQ']['rho']:+.3f}，p={p2['middle_ic']['NQ']['pval']:.3f}），SP500在官方期
+  沒有顯著；拆開兩段子時期看，第三方重建期間^NDX是{p1['middle_ic']['NDX']['rho']:+.3f}
+  （p={p1['middle_ic']['NDX']['pval']:.3f}，不顯著），官方API期間^NDX幾乎剛好是0
+  （{p2['middle_ic']['NDX']['rho']:+.3f}，p={p2['middle_ic']['NDX']['pval']:.3f}），SP500在官方期
   甚至轉回負的（{p2['middle_ic']['SPX']['rho']:+.3f}）。而且只要拿掉頭尾的組數從1組改成4組，
   訊號方向就從負轉正——<b>對「拿掉幾組頭尾」這個選擇本身很敏感，正是雜訊的典型特徵，不是穩定訊號的
   特徵</b>。中間段長條圖看起來也高高低低沒有清楚的階梯狀。合理的解讀沒有變：<b>這個指數的方向性
@@ -409,9 +439,9 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   </ul>
 </div>
 
-<h3>NQ=F 回測（全樣本，2011-01 ~ 2026-07）</h3>
-{backtest_table('NQ')}
-<div style="text-align:center;margin-top:10px;">{backtest_chart('NQ')}</div>
+<h3>^NDX 回測（全樣本，2011-01 ~ 2026-07）</h3>
+{backtest_table('NDX')}
+<div style="text-align:center;margin-top:10px;">{backtest_chart('NDX')}</div>
 
 <h3>SP500 回測（全樣本，2011-01 ~ 2026-07）</h3>
 {backtest_table('SPX')}
@@ -419,22 +449,22 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 
 <div class="callout warn">
   <b>結果跟直覺可能相反：兩套訊號策略都遠遠輸給乾脆買進持有。</b>
-  NQ買進持有15.5年累積 {r['backtest']['NQ']['metrics']['buy_hold']['total_return']:+.0f}%
-  （年化{r['backtest']['NQ']['metrics']['buy_hold']['cagr']:+.1f}%、Sharpe
-  {r['backtest']['NQ']['metrics']['buy_hold']['sharpe']:.2f}）；「恐懼多單／貪婪空手」只累積
-  {r['backtest']['NQ']['metrics']['long_only_tilt']['total_return']:+.0f}%
-  （年化{r['backtest']['NQ']['metrics']['long_only_tilt']['cagr']:+.1f}%）；「恐懼多單／貪婪放空」
-  幾乎打平，累積只有{r['backtest']['NQ']['metrics']['long_short']['total_return']:+.1f}%
-  （年化{r['backtest']['NQ']['metrics']['long_short']['cagr']:+.2f}%，15年幾乎沒賺錢）。SP500也是同樣的型態。
+  ^NDX買進持有15.5年累積 {r['backtest']['NDX']['metrics']['buy_hold']['total_return']:+.0f}%
+  （年化{r['backtest']['NDX']['metrics']['buy_hold']['cagr']:+.1f}%、Sharpe
+  {r['backtest']['NDX']['metrics']['buy_hold']['sharpe']:.2f}）；「恐懼多單／貪婪空手」只累積
+  {r['backtest']['NDX']['metrics']['long_only_tilt']['total_return']:+.0f}%
+  （年化{r['backtest']['NDX']['metrics']['long_only_tilt']['cagr']:+.1f}%）；「恐懼多單／貪婪放空」
+  幾乎打平，累積只有{r['backtest']['NDX']['metrics']['long_short']['total_return']:+.1f}%
+  （年化{r['backtest']['NDX']['metrics']['long_short']['cagr']:+.2f}%，15年幾乎沒賺錢）。SP500也是同樣的型態。
   <br><br>
   原因直接跟第一節「地心引力」的發現連在一起：這15.5年是罕見的長多頭，「恐懼多單／貪婪空手」策略平均
   只有約19%的時間持有多單（其餘時間空手在等分數變低），錯過了大部分的漲幅；「恐懼多單／貪婪放空」
   更慘，貪婪時的空單持續在跟這段長期上漲的趨勢對作，把買進持有原本該賺到的報酬幾乎全部吃掉。
-  「恐懼多單／貪婪空手」的最大回撤（NQ {r['backtest']['NQ']['metrics']['long_only_tilt']['max_dd']:.1f}%）
-  確實比買進持有（{r['backtest']['NQ']['metrics']['buy_hold']['max_dd']:.1f}%）小很多，波動也低很多，
+  「恐懼多單／貪婪空手」的最大回撤（^NDX {r['backtest']['NDX']['metrics']['long_only_tilt']['max_dd']:.1f}%）
+  確實比買進持有（{r['backtest']['NDX']['metrics']['buy_hold']['max_dd']:.1f}%）小很多，波動也低很多，
   如果目標是「降低回撤、犧牲一部分報酬換穩定」，這個策略在風險控制上是有作用的；但如果目標是
-  「打敗大盤」，即使風險調整後看Sharpe值，買進持有（{r['backtest']['NQ']['metrics']['buy_hold']['sharpe']:.2f}）
-  仍然明顯贏過恐懼多單／貪婪空手（{r['backtest']['NQ']['metrics']['long_only_tilt']['sharpe']:.2f}）。
+  「打敗大盤」，即使風險調整後看Sharpe值，買進持有（{r['backtest']['NDX']['metrics']['buy_hold']['sharpe']:.2f}）
+  仍然明顯贏過恐懼多單／貪婪空手（{r['backtest']['NDX']['metrics']['long_only_tilt']['sharpe']:.2f}）。
   <br><br>
   這跟上一節「不宜放空」的結論方向一致，但這裡的回測把它量化得更清楚：不只是「放空會少賺一點」，
   而是<b>放空在這段長多頭裡幾乎抵銷了訊號原本該有的優勢，讓15年的報酬幾乎歸零</b>。
@@ -450,11 +480,11 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 </div>
 <div style="text-align:center;">{horizon_scan_img}</div>
 
-<h3>NQ=F 逐持有期數字</h3>
+<h3>^NDX 逐持有期數字</h3>
 <div class="table-wrap"><table>
   <tr><th>持有期（交易日）</th><th>全樣本IC（0~100分整體）</th>
       <th>第1組（最恐懼）超額報酬</th><th>最後一組（最貪婪）超額報酬</th></tr>
-  {horizon_scan_rows('NQ')}
+  {horizon_scan_rows('NDX')}
 </table></div>
 <p class="sub">* p&lt;0.05。超額報酬＝該分組平均未來報酬減去同期無條件平均（見第一節說明），分桶用逐日重疊資料。</p>
 
@@ -466,15 +496,15 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
     不是「短線比較有效、長線比較沒用」，而是不管持有期長短，CNN分數對「整條0~100分」的區辨力
     始終偏弱，這點在3天、20天、90天都一樣。</li>
     <li><b>最恐懼那組的超額報酬，是隨著持有期拉長而愈來愈明顯，不是愈來愈短愈準：</b>
-    3天只有+0.11%，5天甚至轉負（-0.04%），10天+0.40%，20天+1.80%，一路到90天累積到+5.36%。
+    3天只有+0.13%，5天甚至轉負（-0.00%），10天+0.45%，20天+1.92%，一路到90天累積到+5.40%。
     如果「恐懼買入」這個效應是真的，看起來比較像是「市場從恐慌中花數週到數月慢慢修復」的中期現象，
     不是「恐慌隔天就反彈」的短線現象——3~5天的窗口幾乎看不到任何優勢。</li>
-    <li><b>最貪婪那組的超額報酬，要拉長到60天以上才轉負</b>（40天以前都還是正的，60天-0.93%、
-    90天-1.85%）。意思是：如果貪婪之後真的有「退燒」，這個退燒也是要數個月的時間才會顯現，
+    <li><b>最貪婪那組的超額報酬，要拉長到60天以上才轉負</b>（40天以前都還是正的，60天-0.88%、
+    90天-1.79%）。意思是：如果貪婪之後真的有「退燒」，這個退燒也是要數個月的時間才會顯現，
     不是進場後幾天內就會發生的事。</li>
   </ul>
   SP500的型態完全一樣（最恐懼超額報酬從3天的+0.02%一路爬升到90天的+3.09%；最貪婪超額報酬在
-  40天轉負、90天來到-3.63%），不是NQ單獨的巧合。
+  40天轉負、90天來到-3.63%），不是^NDX單獨的巧合。
 </div>
 
 <h3>那「不同分數，短線該怎麼操作」這個問題，誠實的答案是什麼？</h3>
@@ -522,7 +552,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 </div>
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th>樣本</th><th>IC vs NQ=F</th><th>IC vs SP500</th><th>分桶單調性 vs NQ</th><th>分桶單調性 vs SP500</th></tr>
+    <tr><th>樣本</th><th>IC vs ^NDX</th><th>IC vs SP500</th><th>分桶單調性 vs ^NDX</th><th>分桶單調性 vs SP500</th></tr>
     {ic_rows}
   </table></div>
 </div>
@@ -531,7 +561,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 {period_compare_charts}
 
 <div class="callout {'warn' if not (nq_consistent and spx_consistent) else ''}">
-  <b>穩定性判讀：</b>NQ的IC方向在兩段子時期{stability_note_nq}；SP500的IC方向在兩段子時期{stability_note_spx}。
+  <b>穩定性判讀：</b>^NDX的IC方向在兩段子時期{stability_note_nq}；SP500的IC方向在兩段子時期{stability_note_spx}。
   <br>
   請注意：如果兩段結果差異很大，這個差異<b>可能來自資料品質的落差</b>（第三方重建資料本身可能不夠精確，見下方
   「重建準確度驗證」的量化數字），<b>不必然代表市場行為真的不同</b>——不要只看到某段IC比較強就直接下結論說
@@ -576,14 +606,17 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   <p class="sub">另外，第三方原始資料在2020-06-06 ~ 2020-07-08（約33天）之間有一段缺漏（該來源本身缺這段），
   已如實反映在合併後的資料表裡（缺漏期間沒有列），沒有用插值或前值填補去掩蓋這個缺口。</p>
 
-  <h3>NQ / SP500 價格資料</h3>
-  <p>皆取自 Yahoo Finance：NQ=F（那斯達克100期貨連續合約）、^GSPC（標普500現貨指數），
-  時間範圍對齊到CNN指數資料最早可取得的日期（2011-01-03）至今。NQ用期貨而非 ^NDX 現貨指數是使用者
-  的明確選擇，好處是報酬更貼近實際可交易商品，代價是期貨轉倉可能帶來的價差雜訊，讓NQ這一側的報酬
-  序列跟SP500的「現貨指數」在資料性質上不是完全對等的比較基礎——解讀時建議把這一點也算進去。</p>
+  <h3>^NDX / SP500 價格資料</h3>
+  <p>皆取自 Yahoo Finance：^NDX（那斯達克100現貨指數）、^GSPC（標普500現貨指數），
+  時間範圍對齊到CNN指數資料最早可取得的日期（2011-01-03）至今。<b>兩邊都是現貨指數</b>——
+  這是2026-07-23的更新：這一側原本用的是 NQ=F（那斯達克100期貨），但期貨有轉倉／展期的價差雜訊，
+  跟SP500用現貨指數不是完全對等的比較基礎；改成 ^NDX 現貨指數之後，「^NDX vs SP500」這組對照
+  就是兩個同性質的現貨指數在比，資料層面更乾淨，沒有期貨/現貨混用的問題。代價是 ^NDX 是指數、
+  不是可直接交易的商品，但本報告的策略回測本來就是示意性質（SP500 那側也一樣是不可直接交易的指數），
+  這個取捨不影響任何結論。</p>
 </div>
 
-<h2>六、NQ 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
+<h2>六、^NDX 與 SP500 兩組結果，為什麼不能當作對等的兩次驗證</h2>
 <div class="callout">
   CNN恐懼貪婪指數的七項分項成分（動能、強度、廣度、避險需求、垃圾債需求、選擇權Put/Call、波動度VIX）
   裡，動能、強度、廣度這幾項本身就是直接拿標普500或紐約證交所相關資料算出來的。這代表：
@@ -591,18 +624,18 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
     <li><b>「CNN指數對SP500未來報酬的預測力」</b>測試，某種程度上是指數在對自己的資料來源做預測——
     分數本身部分是由SP500近期走勢決定的，兩者天生就會有一定程度的統計關聯，這個關聯不完全能算作
     「指數真的預測到了什麼」，也可能只是「指數的計算方式本來就跟SP500的近況綁在一起」。</li>
-    <li><b>「CNN指數對NQ未來報酬的預測力」</b>測試，因為NQ完全不是CNN指數計算時用到的任何一項輸入
-    資料，是一個更乾淨、更能檢驗這個訊號能不能類推到「指數本身沒看過」的其他市場的測試。如果NQ這邊
-    的IC強度、方向跟SP500差不多，那才是訊號有跨市場類推能力的比較強證據；如果NQ明顯比SP500弱，
+    <li><b>「CNN指數對^NDX未來報酬的預測力」</b>測試，因為^NDX完全不是CNN指數計算時用到的任何一項輸入
+    資料，是一個更乾淨、更能檢驗這個訊號能不能類推到「指數本身沒看過」的其他市場的測試。如果^NDX這邊
+    的IC強度、方向跟SP500差不多，那才是訊號有跨市場類推能力的比較強證據；如果^NDX明顯比SP500弱，
     比較合理的解讀是SP500那組數字有一部分只是「同源效應」，不是真正的預測力。</li>
   </ul>
   下面用本次算出來的全樣本數字具體對照：
 </div>
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th></th><th>NQ=F（乾淨的跨市場測試）</th><th>SP500（部分同源，解讀要打折扣）</th></tr>
-    <tr><td>全樣本IC（20日、不重疊）</td><td>{fmt_rho(full['ic']['NQ'])}</td><td>{fmt_rho(full['ic']['SPX'])}</td></tr>
-    <tr><td>全樣本分桶單調性</td><td>{fmt_mono(full['bucket']['NQ'])}</td><td>{fmt_mono(full['bucket']['SPX'])}</td></tr>
+    <tr><th></th><th>^NDX（乾淨的跨市場測試）</th><th>SP500（部分同源，解讀要打折扣）</th></tr>
+    <tr><td>全樣本IC（20日、不重疊）</td><td>{fmt_rho(full['ic']['NDX'])}</td><td>{fmt_rho(full['ic']['SPX'])}</td></tr>
+    <tr><td>全樣本分桶單調性</td><td>{fmt_mono(full['bucket']['NDX'])}</td><td>{fmt_mono(full['bucket']['SPX'])}</td></tr>
   </table></div>
 </div>
 
@@ -641,32 +674,32 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 <h2>八、結論</h2>
 <div class="card">
   <p>
-    全樣本下，CNN恐懼貪婪指數（股市版）對NQ與SP500未來20個交易日報酬的IC分別為
-    {full['ic']['NQ']['rho']:+.3f}（p={full['ic']['NQ']['pval']:.3f}）與
+    全樣本下，CNN恐懼貪婪指數（股市版）對^NDX與SP500未來20個交易日報酬的IC分別為
+    {full['ic']['NDX']['rho']:+.3f}（p={full['ic']['NDX']['pval']:.3f}）與
     {full['ic']['SPX']['rho']:+.3f}（p={full['ic']['SPX']['pval']:.3f}），
     方向都是負的，符合「恐懼時買入、未來報酬較高」的傳統解讀方向，但強度偏弱，
-    且都<b>{'未達' if full['ic']['NQ']['pval']>=0.05 and full['ic']['SPX']['pval']>=0.05 else '部分達到'}</b>
+    且都<b>{'未達' if full['ic']['NDX']['pval']>=0.05 and full['ic']['SPX']['pval']>=0.05 else '部分達到'}</b>
     常見的p&lt;0.05統計顯著門檻。
   </p>
   <p>
-    拆開兩段子時期看，NQ的方向{stability_note_nq}、SP500的方向{stability_note_spx}，官方API期間
-    （2021-02至今）修正資料品質問題之後，IC強度（NQ {p2['ic']['NQ']['rho']:+.3f}、SP500
+    拆開兩段子時期看，^NDX的方向{stability_note_nq}、SP500的方向{stability_note_spx}，官方API期間
+    （2021-02至今）修正資料品質問題之後，IC強度（^NDX {p2['ic']['NDX']['rho']:+.3f}、SP500
     {p2['ic']['SPX']['rho']:+.3f}）其實跟第三方重建期間相當接近，比修正前的版本（當時被佔位值
-    污染、NQ的IC被拉到接近0）更穩定、更可信。不過官方期樣本數仍只有約{p2['n_rows']}個交易日、
-    不重疊取樣後IC只剩約{p2['ic']['NQ']['n']}筆，統計檢定力本來就偏低，加上這段期間本身經歷
+    污染、^NDX的IC被拉到接近0）更穩定、更可信。不過官方期樣本數仍只有約{p2['n_rows']}個交易日、
+    不重疊取樣後IC只剩約{p2['ic']['NDX']['n']}筆，統計檢定力本來就偏低，加上這段期間本身經歷
     2022升息、2023-2025AI狂熱等風格迥異的市場階段，IC結果的穩健性還是需要保守看待，不宜只憑
     這一段的數字就對訊號下強烈結論。
   </p>
   <p>
-    NQ與SP500兩組結果之間，因為SP500本身是CNN指數部分計算輸入的來源，SP500那組IC不能被當成
-    獨立於指數本身的「乾淨」驗證；NQ那組因為完全不是指數的計算輸入，是這次驗證裡比較有參考價值的
+    ^NDX與SP500兩組結果之間，因為SP500本身是CNN指數部分計算輸入的來源，SP500那組IC不能被當成
+    獨立於指數本身的「乾淨」驗證；^NDX那組因為完全不是指數的計算輸入，是這次驗證裡比較有參考價值的
     跨市場類推證據。整體而言，這個指數看起來更接近「同期市場情緒的溫度計」，而不是一個能提前20個
     交易日、有統計顯著把握去predict報酬方向的獨立訊號。
   </p>
   <p>
     <b>訊號的方向性幾乎完全集中在頭尾的極端讀數，中間的「中性」區間沒有穩定規律。</b>把最恐懼、
-    最貪婪兩端各拿掉4組、只留中間12組（約30~68分）重算IC，全樣本NQ甚至翻成正的
-    （{full['middle_ic']['NQ']['rho']:+.3f}，p={full['middle_ic']['NQ']['pval']:.3f}，勉強顯著），
+    最貪婪兩端各拿掉4組、只留中間12組（約30~68分）重算IC，全樣本^NDX甚至翻成正的
+    （{full['middle_ic']['NDX']['rho']:+.3f}，p={full['middle_ic']['NDX']['pval']:.3f}，勉強顯著），
     方向跟「恐懼買入」相反；但SP500不顯著、兩段子時期也不一致（官方期SP500甚至轉負），而且這個
     正負號本身會隨著「頭尾各拿掉幾組」這個切法改變而翻轉——這正是雜訊的特徵，不是穩定訊號的特徵。
     意思是：CNN分數落在中性區間時，對未來20日報酬沒有清楚、可靠、能重複驗證的區辨力；真正有訊息量的
@@ -674,9 +707,9 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
   </p>
   <p>
     <b>把訊號變成策略之後，長期報酬遠遠落後買進持有。</b>全樣本回測顯示，「恐懼多單／貪婪空手」
-    策略15.5年只累積{r['backtest']['NQ']['metrics']['long_only_tilt']['total_return']:+.0f}%（NQ），
-    「恐懼多單／貪婪放空」更只有{r['backtest']['NQ']['metrics']['long_short']['total_return']:+.1f}%，
-    兩者都遠遠不敵買進持有的{r['backtest']['NQ']['metrics']['buy_hold']['total_return']:+.0f}%——
+    策略15.5年只累積{r['backtest']['NDX']['metrics']['long_only_tilt']['total_return']:+.0f}%（^NDX），
+    「恐懼多單／貪婪放空」更只有{r['backtest']['NDX']['metrics']['long_short']['total_return']:+.1f}%，
+    兩者都遠遠不敵買進持有的{r['backtest']['NDX']['metrics']['buy_hold']['total_return']:+.0f}%——
     根本原因就是第一節講的「地心引力」：這15.5年是罕見長多頭，任何讓你長時間空手或做空的策略，
     都會持續錯過這段漲幅。這印證了「貪婪時不宜放空」的直覺，但也進一步顯示：<b>就連「貪婪時只是
     空手觀望、不做多不做空」，付出的機會成本可能已經比想像中大得多。</b>如果只看風險（最大回撤、
@@ -692,7 +725,7 @@ IC與分桶單調性算的是「分數越高、柱子相對而言有沒有變矮
 </div>
 
 <footer>
-  資料來源：CNN官方API（production.dataviz.cnn.io）、GitHub whit3rabbit/fear-greed-data、Yahoo Finance（NQ=F、^GSPC）。
+  資料來源：CNN官方API（production.dataviz.cnn.io）、GitHub whit3rabbit/fear-greed-data、Yahoo Finance（^NDX、^GSPC）。
   分析與報告程式碼位於 <code>fg_nq_analysis/ic_analysis/</code>（<code>fetch_fg.py</code> /
   <code>fetch_prices.py</code> / <code>analysis.py</code> / <code>build_report.py</code>），與美債恐懼貪婪
   儀表板專案（<code>bond_data_pipeline/</code>）完全分開存放，不共用任何資料或程式碼。
