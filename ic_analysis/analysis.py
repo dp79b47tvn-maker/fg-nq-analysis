@@ -2,9 +2,9 @@
 CNN 恐懼貪婪指數(股市版) 對 ^NDX / SP500 的因子驗證分析
 
 方法論沿用 bond_data_pipeline/factor_validation_analysis.py 的做法：
-  1. IC分析：CNN指數分數 vs 未來20個交易日報酬，Spearman等級相關係數，
-     一律用「不重疊取樣」(每隔20個交易日才取一筆樣本)，避免報酬期間重疊互相
-     高度相關、把統計顯著性灌水。
+  1. IC分析（2026-07-23改版）：CNN指數分數 vs 未來20個交易日報酬，Spearman等級相關係數。
+     rho(點估計)用「重疊取樣」(全部每日配對，使用者要求)；但顯著性p值用「不重疊取樣」
+     (每隔20天取一筆)，因為重疊樣本自相關會把顯著性灌水。詳見 compute_ic() docstring。
   2. 分位數分桶：qcut切20等分，看未來20日平均報酬是否隨分數單調變化。
      這裡分桶分析改用「逐日重疊」資料(不做不重疊取樣)——這點跟IC分析的方法論
      不同，是刻意的取捨：20組要拆兩段子時期後還有夠的樣本可看，不重疊取樣在
@@ -30,6 +30,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.font_manager as _fm
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -77,21 +78,36 @@ def split_periods(df):
     return {"full": df, "period1_reconstructed": p1, "period2_official": p2}
 
 
-# ---------------------------------------------------------------- 1. IC分析(不重疊取樣)
-def non_overlapping_ic(df, target_col, horizon=HORIZON):
+# ---------------------------------------------------------------- 1. IC分析(重疊取樣rho + 不重疊顯著性)
+def compute_ic(df, target_col, horizon=HORIZON):
+    """2026-07-23起改版：rho(點估計)改用『重疊取樣』——用全部每日的(分數, 未來報酬)配對算，
+    用到全部資料、點估計更穩定(這是使用者要求的改動)。但p值/顯著性不採用重疊版本，因為重疊樣本
+    相鄰點的報酬窗口大量重疊、有強烈自相關，會把顯著性灌水成虛假的『顯著』。因此另外用『不重疊
+    取樣』(每隔horizon天取一筆)算一個乾淨的p值，當作可信的顯著性依據：
+      - rho / n            → 重疊取樣(headline)
+      - pval / n_nonoverlap → 不重疊取樣(顯著性用這個，pval欄位就是可信的那個)
+      - pval_overlap        → 重疊取樣的p值，只保留給報告當『看，這個被灌水了』的對照，不作為結論依據
+    """
     sub = df[["score"]].copy()
     sub["fwd"] = forward_return(df[target_col], horizon)
     sub = sub.dropna()
+    empty = {"rho": None, "pval": None, "pval_overlap": None, "n": len(sub),
+             "n_nonoverlap": 0, "rho_nonoverlap": None}
     if len(sub) < LOW_N_WARN:
-        return {"rho": None, "pval": None, "n": len(sub)}
+        return empty
+    rho_ov, p_ov = stats.spearmanr(sub["score"], sub["fwd"])
     sampled = sub.iloc[::horizon]
-    if len(sampled) < 8:
-        return {"rho": None, "pval": None, "n": len(sampled)}
-    rho, pval = stats.spearmanr(sampled["score"], sampled["fwd"])
+    if len(sampled) >= 8:
+        rho_no, p_no = stats.spearmanr(sampled["score"], sampled["fwd"])
+    else:
+        rho_no, p_no = (float("nan"), float("nan"))
     return {
-        "rho": float(rho) if pd.notna(rho) else None,
-        "pval": float(pval) if pd.notna(pval) else None,
-        "n": len(sampled),
+        "rho": float(rho_ov) if pd.notna(rho_ov) else None,
+        "pval_overlap": float(p_ov) if pd.notna(p_ov) else None,
+        "pval": float(p_no) if pd.notna(p_no) else None,
+        "n": int(len(sub)),
+        "n_nonoverlap": int(len(sampled)),
+        "rho_nonoverlap": float(rho_no) if pd.notna(rho_no) else None,
     }
 
 
@@ -143,11 +159,10 @@ MIDDLE_EXCLUDE_EACH_END = 4  # 前後各排除幾組(不是只排除頭尾各1�
 
 def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS,
                     exclude_each_end=MIDDLE_EXCLUDE_EACH_END):
-    """先用跟主IC分析完全一樣的不重疊取樣(保留取樣間距，不要在篩選後才取樣，
-    不然會破壞『每隔horizon天才取一筆』的前提、重新引入重疊問題)，取完樣之後
-    才把最恐懼端、最貪婪端各exclude_each_end組的樣本點剔除，只看中間那些組
-    『分數高低』跟『未來報酬』還有沒有單調關係——回答『拿掉頭尾兩端的極端讀數
-    之後，中間是不是就沒有方向性了』這個問題。"""
+    """把最恐懼端、最貪婪端各exclude_each_end組剔除，只看中間那些組『分數高低』跟
+    『未來報酬』還有沒有單調關係——回答『拿掉頭尾兩端的極端讀數之後，中間是不是就
+    沒有方向性了』這個問題。跟主IC表同步(2026-07-23)：rho用重疊取樣(全部每日中間段
+    配對)算、顯著性用不重疊取樣的p值。"""
     sub = df[["score"]].copy()
     sub["fwd"] = forward_return(df[target_col], horizon)
     sub = sub.dropna()
@@ -158,20 +173,25 @@ def middle_zone_ic(df, target_col, horizon=HORIZON, buckets=N_BUCKETS,
     except ValueError:
         return None
     n_actual = sub["bucket"].nunique()
-    sampled = sub.iloc[::horizon]
-    middle = sampled[
-        (sampled["bucket"] >= exclude_each_end)
-        & (sampled["bucket"] <= n_actual - 1 - exclude_each_end)
-    ]
-    if len(middle) < 8:
-        return {"rho": None, "pval": None, "n": len(middle)}
-    rho, pval = stats.spearmanr(middle["score"], middle["fwd"])
+    in_middle = (sub["bucket"] >= exclude_each_end) & (sub["bucket"] <= n_actual - 1 - exclude_each_end)
+    middle_all = sub[in_middle]                 # 重疊：全部每日中間段配對
+    middle_no = sub.iloc[::horizon]
+    middle_no = middle_no[(middle_no["bucket"] >= exclude_each_end)
+                          & (middle_no["bucket"] <= n_actual - 1 - exclude_each_end)]
+    if len(middle_all) < 8:
+        return {"rho": None, "pval": None, "n": len(middle_all)}
+    rho_ov, p_ov = stats.spearmanr(middle_all["score"], middle_all["fwd"])
+    if len(middle_no) >= 8:
+        _, p_no = stats.spearmanr(middle_no["score"], middle_no["fwd"])
+    else:
+        p_no = float("nan")
     return {
-        "rho": float(rho) if pd.notna(rho) else None,
-        "pval": float(pval) if pd.notna(pval) else None,
-        "n": len(middle),
-        "n_full_sample": len(sampled),
-        "score_range": [float(middle["score"].min()), float(middle["score"].max())],
+        "rho": float(rho_ov) if pd.notna(rho_ov) else None,
+        "pval": float(p_no) if pd.notna(p_no) else None,          # 顯著性：不重疊
+        "pval_overlap": float(p_ov) if pd.notna(p_ov) else None,  # 重疊p(灌水，僅對照)
+        "n": len(middle_all),
+        "n_nonoverlap": len(middle_no),
+        "score_range": [float(middle_all["score"].min()), float(middle_all["score"].max())],
     }
 
 
@@ -214,7 +234,7 @@ def horizon_scan(df, target_col, horizons=HORIZON_SCAN_SET, buckets=N_BUCKETS):
     完全一致，只是horizon本身當成變數掃過去。"""
     rows = []
     for h in horizons:
-        ic = non_overlapping_ic(df, target_col, horizon=h)
+        ic = compute_ic(df, target_col, horizon=h)
         bucket = bucket_analysis(df, target_col, horizon=h, buckets=buckets)
         fear_excess = greed_excess = fear_n = greed_n = None
         if bucket is not None:
@@ -509,6 +529,76 @@ def top_bucket_drilldown_chart_base64(dd_map, title):
     return fig_to_base64(fig)
 
 
+# ---------------------------------------------------------------- 3c. 報酬趨勢熱力圖（分數十分位 × 持有期1~60）
+HEATMAP_MAX_HORIZON = 60
+HEATMAP_DECILES = 10
+
+
+def horizon_return_heatmap(df, target_col, max_h=HEATMAP_MAX_HORIZON, deciles=HEATMAP_DECILES):
+    """回傳 raw / excess 兩個矩陣（列=分數十分位 D1恐懼→D{deciles}貪婪，欄=持有期1~max_h天）。
+    raw[d, h-1]    = 分數第d十分位、持有h天的平均未來報酬（重疊取樣：用全部每日配對，
+                     每個持有期各自算一次，這是使用者要求的重疊取樣，橫軸要每日顆粒度也非用它不可）。
+    excess[d, h-1] = raw[d, h-1] - 該h天『所有樣本不分分數』的無條件平均報酬（扣掉大盤地心引力，
+                     0=跟隨便挑一天沒兩樣，才看得出分數的影響）。
+    分組(qcut十分位)固定用分數本身切一次、跨所有持有期共用，讓每一列在不同持有期之間可比較。"""
+    dec = pd.qcut(df["score"], deciles, labels=False, duplicates="drop")
+    n_dec = int(dec.max()) + 1 if dec.notna().any() else 0
+    raw = np.full((n_dec, max_h), np.nan)
+    excess = np.full((n_dec, max_h), np.nan)
+    for h in range(1, max_h + 1):
+        fwd = forward_return(df[target_col], h)
+        uncond = fwd.dropna().mean()
+        tmp = pd.DataFrame({"dec": dec, "fwd": fwd}).dropna()
+        g = tmp.groupby("dec")["fwd"].mean()
+        for d in g.index:
+            raw[int(d), h - 1] = g[d]
+            excess[int(d), h - 1] = g[d] - uncond
+    tmp0 = pd.DataFrame({"dec": dec, "score": df["score"]}).dropna()
+    ranges, ns = [], []
+    for d in range(n_dec):
+        s = tmp0[tmp0["dec"] == d]["score"]
+        ranges.append([float(s.min()), float(s.max())])
+        ns.append(int(len(s)))
+    return {"raw": raw.tolist(), "excess": excess.tolist(),
+            "score_ranges": ranges, "decile_n": ns, "max_h": max_h}
+
+
+def heatmap_chart_base64(hm_map, metric_key, title, cbar_label):
+    """一張圖、上下兩個panel（^NDX / SP500）。coolwarm色階：紅=報酬高、藍=報酬低
+    （刻意不用紅綠，因為台股紅=漲綠=跌跟美國相反，紅綠會誤導；紅=高剛好對齊台灣紅=賺）。
+    色階對稱、以0為中心，上下限用98百分位穩健值，避免單一極端格洗白整張圖。"""
+    targets = [t for t in hm_map if hm_map[t] is not None]
+    if not targets:
+        return None
+    mats = {t: np.array(hm_map[t][metric_key], dtype=float) for t in targets}
+    allvals = np.concatenate([m[~np.isnan(m)].ravel() for m in mats.values()])
+    vlim = float(np.nanpercentile(np.abs(allvals), 98)) or 1.0
+
+    fig, axes = plt.subplots(len(targets), 1, figsize=(9.8, 2.7 * len(targets) + 0.6), dpi=140,
+                             constrained_layout=True)
+    if len(targets) == 1:
+        axes = [axes]
+    im = None
+    for ax, t in zip(axes, targets):
+        m = mats[t]
+        im = ax.imshow(m, aspect="auto", cmap="coolwarm", vmin=-vlim, vmax=vlim, origin="lower")
+        ranges = hm_map[t]["score_ranges"]
+        ax.set_yticks(range(m.shape[0]))
+        ax.set_yticklabels([f"D{d+1}（{ranges[d][0]:.0f}-{ranges[d][1]:.0f}分）" for d in range(m.shape[0])],
+                           fontsize=6.5)
+        xt = [0, 9, 19, 29, 39, 49, 59]
+        ax.set_xticks([x for x in xt if x < m.shape[1]])
+        ax.set_xticklabels([str(x + 1) for x in xt if x < m.shape[1]], fontsize=7.5)
+        ax.set_xlabel("持有期（交易日）", fontsize=8.5)
+        ax.set_ylabel("CNN分數十分位\nD1恐懼→D10貪婪", fontsize=8)
+        ax.set_title(TARGETS[t].split(" ")[0], fontsize=9)
+    fig.suptitle(title, fontsize=10.5)
+    cbar = fig.colorbar(im, ax=axes, fraction=0.035, pad=0.015)
+    cbar.set_label(cbar_label, fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+    return fig_to_base64(fig)
+
+
 def price_trend_chart_base64(df, periods):
     """^NDX、SP500 全樣本價格走勢（指數化為期初=100，對數座標），用來直接說明分桶圖
     疊在多大的『大盤長期上漲』基準之上——不是抽象的一句話，讀者可以直接看到那條曲線。"""
@@ -630,7 +720,7 @@ def run_all():
         }
         results["periods"][pname]["middle_ic"] = {}
         for tcol in TARGETS:
-            ic = non_overlapping_ic(pdf, tcol)
+            ic = compute_ic(pdf, tcol)
             results["periods"][pname]["ic"][tcol] = ic
             results["periods"][pname]["middle_ic"][tcol] = middle_zone_ic(pdf, tcol)
 
@@ -671,6 +761,18 @@ def run_all():
     timeline_chart, timeline_stats = timeline_comparison_chart_base64(df)
     results["timeline_chart_base64"] = timeline_chart
     results["timeline_stats"] = timeline_stats
+
+    # ---------------------------------------------------- 報酬趨勢熱力圖（十分位 × 持有期1~60，重疊取樣）
+    hm_map = {t: horizon_return_heatmap(df, t) for t in TARGETS}
+    results["heatmap"] = {
+        "raw_chart_base64": heatmap_chart_base64(
+            hm_map, "raw", "報酬趨勢熱力圖：原始平均報酬（分數十分位 × 持有期1~60天）",
+            "未來N日平均報酬 (%)"),
+        "excess_chart_base64": heatmap_chart_base64(
+            hm_map, "excess", "報酬趨勢熱力圖：超額報酬（減去同持有期無條件平均）",
+            "超額報酬 (%)"),
+        "max_h": HEATMAP_MAX_HORIZON,
+    }
 
     # ---------------------------------------------------- 不同持有期的訊號強度掃描（全樣本）
     scan_ndx = horizon_scan(df, "NDX")
