@@ -18,7 +18,12 @@
 
 驗證 CNN 恐懼貪婪指數（股市版，0~100分，0=極度恐懼、100=極度貪婪）對那斯達克100（^NDX）
 與標普500（^GSPC）未來報酬有沒有預測力。輸出是一份獨立的 HTML 報告
-（`ic_analysis/output/report.html`），目前發布在 Claude Artifact：
+（`ic_analysis/output/report.html`）。
+
+🌐 上線網址（GitHub Actions 每個交易日自動重跑+部署，見下方「發布流程」）：
+https://dp79b47tvn-maker.github.io/fg-nq-analysis/
+
+📊 另有一份較早手動發布的 Claude Artifact 版本（不會自動同步，可能落後）：
 https://claude.ai/code/artifact/d69aa4a5-f2c4-4f5b-9c76-4900e15fff4b
 
 跟同一個使用者的另一個專案 `bond_data_pipeline/`（美債恐懼貪婪儀表板）方法論同源
@@ -34,7 +39,10 @@ python3 analysis.py       # 核心分析(IC/分桶/回測/熱力圖等)，輸出
 python3 build_report.py   # 讀 results.json，組出 output/report.html
 ```
 
-`data/` 和 `output/` 都在 `.gitignore` 裡（每次重跑會重新產生，不追蹤歷史）。改完程式碼後，
+`data/` 和 `output/` 大部分都在 `.gitignore` 裡（每次重跑會重新產生，不追蹤歷史），**唯一
+例外是 `output/report.html`**——這個檔案刻意不被忽略、會進版本控制，因為 GitHub Actions
+的部署流程需要它被 commit 回 repo 才能追蹤歷史／供 Pages 服務讀取（見下方「發布流程」）。
+改完程式碼後，
 四支腳本**不一定要全部重跑**——如果只改了 `build_report.py` 的排版/文字，只要 `results.json`
 還在，直接重跑 `build_report.py` 就好；如果改了 `analysis.py` 裡的計算邏輯，要重跑
 `analysis.py`（會用到已經抓好的 `data/*.csv`，不需要重新 fetch）；只有資料本身可能過期時
@@ -89,24 +97,27 @@ python3 build_report.py   # 讀 results.json，組出 output/report.html
   對 2011~2021 那段重建準確度的驗證，那段的真實準確度沒有獨立驗證方式，解讀要更保守。
 - 價格：Yahoo Finance（`yfinance`），`^NDX`、`^GSPC`。
 
-## 發布流程
+## 發布流程（2026-07-26起：GitHub Actions 自動化，比照 bond_data_pipeline 的模式）
 
-改完 `build_report.py` 或 `analysis.py` 後：
-1. 照上面「執行順序」重跑對應的腳本，重新產生 `output/report.html`。
-2. 檢查 HTML 結構完整（`<div>`/`</div>`、`<table>`/`</table>` 數量要配對，這份報告吃過
-   div 標籤沒配對的虧）：
-   ```bash
-   python3 -c "
-   html = open('output/report.html', encoding='utf-8').read()
-   assert html.count('<div') == html.count('</div>'), 'div mismatch'
-   assert html.count('<table>') == html.count('</table>'), 'table mismatch'
-   print('ok')
-   "
-   ```
-3. 用 Claude 的 Artifact 工具發布（或詢問使用者要不要發布），**沿用同一個 URL**
-   （見本文件開頭），不要開新連結。
-4. Commit 前一定要先問過使用者要不要 commit（見 `~/.claude/CLAUDE.md` 的全域 git 規則，
-   如果你是在讀那份文件的環境下工作）。
+`.github/workflows/update-and-deploy.yml` 會在三種情況觸發：(1) 每個交易日美股收盤後
+（cron，22:00 UTC）(2) push 到 `main` (3) 手動 `workflow_dispatch`。流程是：
+
+1. 安裝中文字型（matplotlib 圖表要用）、裝 `ic_analysis/requirements.txt` 的套件。
+2. 依序跑 `fetch_fg.py` → `fetch_prices.py` → `analysis.py` → `build_report.py`。
+3. 跑 `ic_analysis/scripts/verify_report.py` 驗證（`<div>`/`<table>` 標籤配對、沒有
+   f-string 殘留痕跡、嵌入圖表都是合法PNG、必要章節都在）——**沒過就不會往下部署**。
+4. 把重新產生的 `output/report.html` commit 回 repo（`.gitignore` 對它開了例外，見上方）。
+5. 複製一份成 `output/index.html`，把整個 `output/` 資料夾部署到 GitHub Pages。
+
+**本機開發流程**：改完 `build_report.py` 或 `analysis.py` 後，照「執行順序」重新產生
+`output/report.html`，然後手動跑一次 `python3 ic_analysis/scripts/verify_report.py`
+確認過關，再考慮要不要 push（push到main會觸發上面的自動部署）。Commit 前一定要先問過
+使用者要不要 commit（見 `~/.claude/CLAUDE.md` 的全域 git 規則，如果你是在讀那份文件的
+環境下工作）。
+
+**如果 Pages 網址打不開**：GitHub Pages 需要在 repo 設定裡手動啟用過一次
+（Settings → Pages → Source 選 "GitHub Actions"），這是一次性的手動步驟，git push
+沒辦法自動做這件事——如果部署流程跑到 `deploy` job 失敗，先檢查這個有沒有設定。
 
 ## 使用者背景（有助於判斷語氣跟優先順序）
 

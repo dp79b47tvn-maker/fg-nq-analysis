@@ -1,4 +1,5 @@
 data/
-output/
+output/*
+!output/report.html
 __pycache__/
 *.pyc

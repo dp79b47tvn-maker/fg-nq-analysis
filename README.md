@@ -4,7 +4,13 @@
 標普500指數（^GSPC）未來報酬有沒有預測力：IC 相關性分析、分位數分桶、不同持有期的訊號強度、
 策略回測、報酬趨勢熱力圖。
 
-📊 **報告連結**：https://claude.ai/code/artifact/d69aa4a5-f2c4-4f5b-9c76-4900e15fff4b
+🌐 **上線網址**：https://dp79b47tvn-maker.github.io/fg-nq-analysis/
+（透過 GitHub Actions 每個交易日美股收盤後自動重新抓資料、重算、部署，見
+`.github/workflows/update-and-deploy.yml`；也可以手動觸發 `workflow_dispatch`）
+
+📊 另一份連結（Claude Artifact，之前在對話裡手動發布的版本，不會跟著這個 repo 的 GitHub
+Actions 自動同步，可能落後於上面的 GitHub Pages 版本）：
+https://claude.ai/code/artifact/d69aa4a5-f2c4-4f5b-9c76-4900e15fff4b
 
 跟同一位使用者的另一個專案 [`bond-fear-greed-dashboard`](https://github.com/dp79b47tvn-maker/bond-fear-greed-dashboard)
 （美債版恐懼貪婪指數）方法論同源，但兩者完全獨立，不共用資料或程式碼。
@@ -43,8 +49,8 @@ python3 build_report.py
 # 產出 output/report.html
 ```
 
-目前是**手動**重跑、手動發布到 Claude Artifact，還沒有像美債專案那樣接 GitHub Actions
-自動排程更新。
+正式的上線版本（見上方網址）是透過 GitHub Actions 自動重跑+部署，不需要手動執行以上步驟；
+本機手動跑主要是給開發/除錯用。
 
 ## 給 AI Agent 的說明
 

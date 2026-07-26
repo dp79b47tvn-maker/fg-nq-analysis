@@ -1,0 +1,83 @@
+name: 每日更新並部署報告
+
+on:
+  schedule:
+    # 每個交易日美股收盤後跑一次(22:00 UTC = 美東18:00 EDT / 17:00 EST)
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ic_analysis
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 安裝中文字型(圖表用)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 抓CNN恐懼貪婪指數
+        run: python3 fetch_fg.py
+
+      - name: 抓^NDX / SP500價格
+        run: python3 fetch_prices.py
+
+      - name: 跑分析(IC/分桶/回測/熱力圖)
+        run: python3 analysis.py
+
+      - name: 產生報告
+        run: python3 build_report.py
+
+      - name: 驗證報告
+        run: python3 scripts/verify_report.py
+
+      - name: 準備Pages產物(report.html當首頁)
+        run: cp output/report.html output/index.html
+
+      - name: 把重新產生的報告commit回repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/report.html
+          git diff --staged --quiet || git commit -m "自動更新: $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: 上傳Pages產物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ic_analysis/output
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署到GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
