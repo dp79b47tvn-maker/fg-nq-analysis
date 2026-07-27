@@ -316,6 +316,11 @@ def build():
   <code>fg_nq_analysis/ic_analysis/</code>。方法論沿用美債專案「因子驗證分析報告」的IC與分位數分桶架構，
   套用在CNN官方股市版指數上。
 </p>
+<div class="callout">
+  <b>閱讀指引：</b>這份報告的功能是<b>了解目前市場的方向和大環境情緒</b>，不是看到指標就去做交易。
+  因此，報告的重心是提供一個<b>研究框架</b>——幫助讀者理解 CNN 恐懼貪婪指數在歷史上跟未來報酬之間的統計關聯、
+  哪些訊號可信哪些不可靠、以及方法論本身的限制——而不是給出可以直接照搬的交易策略或進出場訊號。
+</div>
 <div class="gauge-row">
   <span class="gauge-label">0 極度恐懼</span>
   <div class="gauge-bar"></div>
