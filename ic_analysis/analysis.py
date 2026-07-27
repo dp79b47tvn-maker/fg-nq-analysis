@@ -690,6 +690,70 @@ def timeline_comparison_chart_base64(df):
     return fig_to_base64(fig), {"n_fear": n_fear, "n_greed": n_greed}
 
 
+def timeline_excess_chart_base64(df, horizon=HORIZON):
+    """上下兩層對齊圖：上層同原版（CNN指數逐日分數），下層改成每天的
+    『未來 horizon 日超額報酬』（= 未來報酬 - 同持有期全樣本無條件平均），
+    用來看「極端讀數出現時，後續超額報酬到底是正還是負」。"""
+    fwd_ndx = forward_return(df["NDX"], horizon)
+    fwd_spx = forward_return(df["SPX"], horizon)
+    uncond_ndx = float(fwd_ndx.dropna().mean())
+    uncond_spx = float(fwd_spx.dropna().mean())
+    excess_ndx = fwd_ndx - uncond_ndx
+    excess_spx = fwd_spx - uncond_spx
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(9.5, 6.6), dpi=140, sharex=True,
+        gridspec_kw={"height_ratios": [1, 1.7], "hspace": 0.06},
+    )
+
+    # ---- 上層：CNN 指數分數（同原版）----
+    is_official = df["source"] == "official"
+    ax1.plot(df.index[~is_official], df["score"][~is_official], color=FEAR_HEX,
+              linewidth=0.7, alpha=0.5, label="第三方重建")
+    ax1.plot(df.index[is_official], df["score"][is_official], color=FEAR_HEX,
+              linewidth=0.9, label="官方API")
+    ax1.axhspan(0, EXTREME_FEAR_TH, color="#2E7D4F", alpha=0.08, linewidth=0)
+    ax1.axhspan(EXTREME_GREED_TH, 100, color="#B23B3B", alpha=0.08, linewidth=0)
+    ax1.axhline(EXTREME_FEAR_TH, color="#2E7D4F", linewidth=0.8, linestyle="--")
+    ax1.axhline(EXTREME_GREED_TH, color="#B23B3B", linewidth=0.8, linestyle="--")
+    ax1.set_ylim(0, 100)
+    ax1.set_ylabel("CNN指數分數", fontsize=9)
+    ax1.text(df.index[10], EXTREME_FEAR_TH - 3, f"{EXTREME_FEAR_TH}＝最恐懼門檻",
+              fontsize=7, color="#2E7D4F", va="top")
+    ax1.text(df.index[10], EXTREME_GREED_TH + 3, f"{EXTREME_GREED_TH}＝最貪婪門檻",
+              fontsize=7, color="#B23B3B", va="bottom")
+    ax1.legend(loc="upper left", fontsize=7.5, frameon=False, ncol=2)
+    ax1.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax1.spines[spine].set_visible(False)
+
+    # ---- 下層：逐日超額報酬 ----
+    ax2.plot(df.index, excess_ndx, color="#23262B", linewidth=0.8, alpha=0.7,
+              label=f"^NDX 未來{horizon}日超額報酬")
+    ax2.plot(df.index, excess_spx, color="#8A8577", linewidth=0.7, alpha=0.7,
+              linestyle="--", label=f"SP500 未來{horizon}日超額報酬")
+    ax2.axhline(0, color="#3a3a36", linewidth=0.8)
+
+    fear_mask = df["score"] < EXTREME_FEAR_TH
+    greed_mask = df["score"] > EXTREME_GREED_TH
+    ax2.scatter(df.index[fear_mask], excess_ndx[fear_mask], color="#2E7D4F", s=9, zorder=5,
+                label=f"分數<{EXTREME_FEAR_TH}最恐懼")
+    ax2.scatter(df.index[fear_mask], excess_spx[fear_mask], color="#2E7D4F", s=7, zorder=5)
+    ax2.scatter(df.index[greed_mask], excess_ndx[greed_mask], color="#B23B3B", s=9, zorder=5,
+                label=f"分數>{EXTREME_GREED_TH}最貪婪")
+    ax2.scatter(df.index[greed_mask], excess_spx[greed_mask], color="#B23B3B", s=7, zorder=5)
+    ax2.set_ylabel(f"未來{horizon}日超額報酬 (%)", fontsize=9)
+    ax2.tick_params(axis="x", labelsize=8)
+    ax2.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax2.spines[spine].set_visible(False)
+    ax2.legend(loc="upper left", fontsize=7.5, frameon=False, ncol=2)
+
+    fig.suptitle(f"指數時間軸總覽：CNN分數 vs 未來{horizon}日超額報酬", fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return fig_to_base64(fig)
+
+
 def fig_to_base64(fig):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -752,13 +816,11 @@ def run_all():
     timeline_chart, timeline_stats = timeline_comparison_chart_base64(df)
     results["timeline_chart_base64"] = timeline_chart
     results["timeline_stats"] = timeline_stats
+    results["timeline_excess_chart_base64"] = timeline_excess_chart_base64(df)
 
     # ---------------------------------------------------- 報酬趨勢熱力圖（十分位 × 持有期1~60，重疊取樣）
     hm_map = {t: horizon_return_heatmap(df, t) for t in TARGETS}
     results["heatmap"] = {
-        "raw_chart_base64": heatmap_chart_base64(
-            hm_map, "raw", "報酬趨勢熱力圖：原始平均報酬（分數十分位 × 持有期1~60天）",
-            "未來N日平均報酬 (%)"),
         "excess_chart_base64": heatmap_chart_base64(
             hm_map, "excess", "報酬趨勢熱力圖：超額報酬（減去同持有期無條件平均）",
             "超額報酬 (%)"),

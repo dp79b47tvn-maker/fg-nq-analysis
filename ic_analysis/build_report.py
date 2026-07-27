@@ -151,10 +151,6 @@ def build():
 
     # ---- 報酬趨勢熱力圖 ----
     hmp = r.get("heatmap", {})
-    raw_heatmap_img = (
-        f"<img src='data:image/png;base64,{hmp['raw_chart_base64']}' style='width:100%;max-width:900px;'/>"
-        if hmp.get("raw_chart_base64") else "<p class='dim'>（無法產生原始報酬熱力圖）</p>"
-    )
     excess_heatmap_img = (
         f"<img src='data:image/png;base64,{hmp['excess_chart_base64']}' style='width:100%;max-width:900px;'/>"
         if hmp.get("excess_chart_base64") else "<p class='dim'>（無法產生超額報酬熱力圖）</p>"
@@ -220,6 +216,11 @@ def build():
         f"<img src='data:image/png;base64,{r['timeline_chart_base64']}' "
         f"style='width:100%;max-width:820px;'/>"
         if r.get("timeline_chart_base64") else "<p class='dim'>（無法產生時間軸對照圖）</p>"
+    )
+    timeline_excess_img = (
+        f"<img src='data:image/png;base64,{r['timeline_excess_chart_base64']}' "
+        f"style='width:100%;max-width:820px;'/>"
+        if r.get("timeline_excess_chart_base64") else "<p class='dim'>（無法產生超額報酬時間軸圖）</p>"
     )
     ts = r.get("timeline_stats", {})
 
@@ -328,6 +329,15 @@ style="color:#2E7D4F">綠點標出分數&lt;25</span>、<span class="fear-tilt" 
 標出分數&gt;75</span>，方便直接用肉眼比對「極端讀數出現時，股價實際在做什麼」——
 全樣本裡分數低於25的有{ts.get('n_fear','—')}天、高於75的有{ts.get('n_greed','—')}天。</p>
 <div style="text-align:center;">{timeline_img}</div>
+
+<h4>超額報酬版本：CNN分數 vs 未來20日超額報酬（扣掉同持有期無條件平均）</h4>
+<p>上面那張用的是原始價格走勢，直覺但會被「大盤長期上漲」主導。
+下面這張改成每一天對應的<b>未來20日超額報酬</b>（= 該天起算的未來20日報酬 − 全樣本平均20日報酬），
+0線以上代表「比隨便挑一天還好」、以下代表「比平均還差」——
+同樣用<span class="fear-tilt" style="color:#2E7D4F">綠點標出分數&lt;25</span>、
+<span class="fear-tilt" style="color:#B23B3B">紅點標出分數&gt;75</span>，
+可以直接看極端讀數出現時後續超額報酬是正還是負：</p>
+<div style="text-align:center;">{timeline_excess_img}</div>
 <div class="callout warn">
   <b>這張圖在製作過程中，直接肉眼發現了一個資料品質問題：</b>上層CNN指數線在2020年下半段有一截
   異常地打平成一條直線。往下追查後發現，CNN官方API在2020-07-15~2021-01-21這段回傳的分數，
@@ -538,17 +548,12 @@ CNN分數跟未來報酬的Spearman相關（rho用重疊取樣、顯著性用不
 
 <h3>報酬趨勢熱力圖：所有分數水位 × 每一天到第60天，一次看完</h3>
 <p>上面的線圖只畫了最恐懼、最貪婪兩條。這張熱力圖把<b>分數切成10等分（直軸，D1最恐懼→D10最貪婪）</b>、
-<b>持有期從第1天排到第60天（橫軸）</b>，每一格的顏色是那個「分數水位 × 持有天數」的平均報酬。挑任一條分數列
+<b>持有期從第1天排到第60天（橫軸）</b>，每一格的顏色是那個「分數水位 × 持有天數」的<b>超額報酬</b>（扣掉同持有期的
+全樣本無條件平均，0 代表跟隨便挑一天沒兩樣，才看得出分數的影響）。挑任一條分數列
 從左掃到右，就能看那個水位的報酬隨持有天數怎麼變化。取樣用重疊（每日），因為橫軸要有每日顆粒度、非用重疊不可；
 熱力圖只畫平均報酬、不涉及顯著性，重疊完全沒問題。<b>色階刻意用藍↔紅、不用紅綠</b>（台股紅=漲綠=跌跟美股相反，
-紅綠會誤導）：<span style="color:#b1592f;font-weight:700">紅＝報酬較高</span>、<span style="color:#3E5C76;font-weight:700">藍＝報酬較低</span>。</p>
+紅綠會誤導）：<span style="color:#b1592f;font-weight:700">紅＝超額報酬較高</span>、<span style="color:#3E5C76;font-weight:700">藍＝超額報酬較低</span>。</p>
 
-<h4>① 原始平均報酬（會被「大盤地心引力」主導）</h4>
-<div style="text-align:center;">{raw_heatmap_img}</div>
-<p class="sub">整張圖幾乎都是紅的、而且越往右（持有越久）越紅——這就是前面講過的「地心引力」：這15.5年是長多頭，
-不管分數多少、持有越久平均報酬越高。光看這張，看不太出分數的影響，因為所有列都被大盤上漲墊高了。</p>
-
-<h4>② 超額報酬（扣掉同持有期的無條件平均，才看得出分數的影響）</h4>
 <div style="text-align:center;">{excess_heatmap_img}</div>
 <div class="callout">
   <b>扣掉地心引力之後，分數的影響一目了然，而且跟前面所有分析完全對得起來：</b>
