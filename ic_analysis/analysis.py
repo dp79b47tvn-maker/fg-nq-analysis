@@ -490,42 +490,33 @@ def top_bucket_drilldown(df, target_col, horizon=HORIZON, buckets=N_BUCKETS, sub
 
 
 def top_bucket_drilldown_chart_base64(dd_map, title):
-    """2×2 網格：列＝標的(NDX/SPX)，欄＝切法(固定等寬 / 等數量)。樣本數<10的子組用警示色標。"""
-    targets = [t for t in dd_map if dd_map[t] is not None]
-    if not targets:
+    """單張圖：只畫 SP500 等數量分位(qcut)。樣本數<10的子組用警示色標。"""
+    dd = dd_map.get("SPX")
+    if dd is None:
         return None
-    fig, axes = plt.subplots(len(targets), 2, figsize=(9.5, 3.0 * len(targets)), dpi=140)
-    if len(targets) == 1:
-        axes = axes.reshape(1, -1)
-    method_names = [("fixed", "固定等寬分數區間"), ("qcut", "等數量分位(qcut)")]
-    for row, t in enumerate(targets):
-        dd = dd_map[t]
-        short = TARGETS[t].split(" ")[0]
-        for col, (key, cname) in enumerate(method_names):
-            ax = axes[row][col]
-            rows = dd[key]
-            labels = [r["label"] for r in rows]
-            vals = [r["excess"] if r["excess"] is not None else 0.0 for r in rows]
-            ns = [r["n"] for r in rows]
-            colors = [GREED_HEX if n >= LOW_N_WARN else WARN_HEX for n in ns]
-            ax.bar(range(len(rows)), vals, color=colors, width=0.7)
-            ax.axhline(0, color="#3a3a36", linewidth=1.0)
-            vmax = max(vals + [0]); vmin = min(vals + [0])
-            pad = (vmax - vmin) * 0.28 or 0.5
-            ax.set_ylim(vmin - pad, vmax + pad)
-            ax.set_xticks(range(len(rows)))
-            ax.set_xticklabels(labels, fontsize=6, rotation=30, ha="right")
-            ax.set_title(f"{short}｜{cname}", fontsize=8.5, pad=8)
-            if col == 0:
-                ax.set_ylabel("超額報酬 (%)", fontsize=8)
-            ax.tick_params(axis="y", labelsize=7.5)
-            for spine in ["top", "right"]:
-                ax.spines[spine].set_visible(False)
-            for i, (v, n) in enumerate(zip(vals, ns)):
-                ax.annotate(f"{v:+.2f}\nn={n}", (i, v), textcoords="offset points",
-                            xytext=(0, 3 if v >= 0 else -15), ha="center", fontsize=5.8, linespacing=1.2)
+    fig, ax = plt.subplots(1, 1, figsize=(5.5, 3.2), dpi=140)
+    rows = dd["qcut"]
+    labels = [r["label"] for r in rows]
+    vals = [r["excess"] if r["excess"] is not None else 0.0 for r in rows]
+    ns = [r["n"] for r in rows]
+    colors = [GREED_HEX if n >= LOW_N_WARN else WARN_HEX for n in ns]
+    ax.bar(range(len(rows)), vals, color=colors, width=0.7)
+    ax.axhline(0, color="#3a3a36", linewidth=1.0)
+    vmax = max(vals + [0]); vmin = min(vals + [0])
+    pad = (vmax - vmin) * 0.28 or 0.5
+    ax.set_ylim(vmin - pad, vmax + pad)
+    ax.set_xticks(range(len(rows)))
+    ax.set_xticklabels(labels, fontsize=7, rotation=30, ha="right")
+    ax.set_title("^GSPC｜等數量分位(qcut)", fontsize=9, pad=8)
+    ax.set_ylabel("超額報酬 (%)", fontsize=8)
+    ax.tick_params(axis="y", labelsize=7.5)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    for i, (v, n) in enumerate(zip(vals, ns)):
+        ax.annotate(f"{v:+.2f}\nn={n}", (i, v), textcoords="offset points",
+                    xytext=(0, 3 if v >= 0 else -15), ha="center", fontsize=6.2, linespacing=1.2)
     fig.suptitle(title, fontsize=10)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     return fig_to_base64(fig)
 
 
